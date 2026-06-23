@@ -1,7 +1,5 @@
 package com.HookTest;
 
-import static android.content.Context.WINDOW_SERVICE;
-
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Application;
@@ -22,7 +20,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
-import android.graphics.PixelFormat;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
@@ -42,12 +39,13 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.WindowManager;
+import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.ImageView;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.RadioButton;
@@ -119,7 +117,8 @@ public class Hook implements IXposedHookLoadPackage {
     private static LinearLayout imagePreviewContainer;
 
     // 悬浮窗相关
-    private static WindowManager windowManager;
+    private static Activity hostActivity;
+    private static ViewGroup contentParent;
     private static View floatView;
     private static View panelView;
     private static boolean isPanelShowing = false;
@@ -178,7 +177,11 @@ public class Hook implements IXposedHookLoadPackage {
                     Log.e(TAG, "LaunchHomeActivity onCreate");
                     uiHandler.postDelayed(() -> {
                         try {
-                            showFloatWindow(activity);
+                            hostActivity = activity;
+                            contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                            if (floatView == null) {
+                                showFloatWindow(activity);
+                            }
                         } catch (Throwable t) {
                             Log.e(TAG, "显示悬浮窗失败", t);
                         }
@@ -199,7 +202,11 @@ public class Hook implements IXposedHookLoadPackage {
                         Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
                         uiHandler.postDelayed(() -> {
                             try {
-                                showFloatWindow(activity);
+                                hostActivity = activity;
+                                contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                                if (floatView == null) {
+                                    showFloatWindow(activity);
+                                }
                             } catch (Throwable t2) {
                                 Log.e(TAG, "兜底显示悬浮窗失败", t2);
                             }
@@ -213,42 +220,39 @@ public class Hook implements IXposedHookLoadPackage {
     // ======================== 悬浮窗UI ========================
 
     @SuppressLint("ClickableViewAccessibility")
-    private void showFloatWindow(Context ctx) {
+    private void showFloatWindow(Activity activity) {
         if (floatView != null) return;
-        if (windowManager == null) {
-            windowManager = (WindowManager) ctx.getSystemService(WINDOW_SERVICE);
-        }
 
-        int resourceId = ctx.getResources().getIdentifier("status_bar_height", "dimen", "android");
+        hostActivity = activity;
+        contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+
+        int resourceId = activity.getResources().getIdentifier("status_bar_height", "dimen", "android");
         if (resourceId > 0) {
-            statusBarHeight = ctx.getResources().getDimensionPixelSize(resourceId);
+            statusBarHeight = activity.getResources().getDimensionPixelSize(resourceId);
         }
 
-        final LinearLayout floatBtn = new LinearLayout(ctx);
+        final LinearLayout floatBtn = new LinearLayout(activity);
         floatBtn.setOrientation(LinearLayout.HORIZONTAL);
         floatBtn.setBackgroundColor(0xCC000000);
         floatBtn.setPadding(16, 8, 16, 8);
         floatBtn.setGravity(Gravity.CENTER);
 
-        TextView btnText = new TextView(ctx);
+        TextView btnText = new TextView(activity);
         btnText.setText("⚙ Hook");
         btnText.setTextColor(0xFFFFFFFF);
         btnText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         floatBtn.addView(btnText);
 
-        WindowManager.LayoutParams floatParams = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                getWindowType(),
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                PixelFormat.TRANSLUCENT
+        FrameLayout.LayoutParams layoutParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
         );
-        floatParams.gravity = Gravity.TOP | Gravity.START;
-        floatParams.x = 0;
-        floatParams.y = statusBarHeight + 50;
+        layoutParams.gravity = Gravity.TOP | Gravity.END;
+        layoutParams.topMargin = statusBarHeight + 50;
+        layoutParams.marginEnd = 16;
 
         floatBtn.setOnTouchListener(new View.OnTouchListener() {
-            private int initialX, initialY;
+            private int initialMarginEnd, initialMarginTop;
             private float initialTouchX, initialTouchY;
             private long startTime = 0;
             private boolean isDragging = false;
@@ -257,8 +261,8 @@ public class Hook implements IXposedHookLoadPackage {
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        initialX = floatParams.x;
-                        initialY = floatParams.y;
+                        initialMarginEnd = layoutParams.marginEnd;
+                        initialMarginTop = layoutParams.topMargin;
                         initialTouchX = event.getRawX();
                         initialTouchY = event.getRawY();
                         startTime = System.currentTimeMillis();
@@ -270,15 +274,15 @@ public class Hook implements IXposedHookLoadPackage {
                         if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
                             isDragging = true;
                         }
-                        floatParams.x = initialX + dx;
-                        floatParams.y = initialY + dy;
-                        if (windowManager != null && floatView != null) {
-                            windowManager.updateViewLayout(floatView, floatParams);
+                        layoutParams.marginEnd = initialMarginEnd - dx;
+                        layoutParams.topMargin = initialMarginTop + dy;
+                        if (contentParent != null && floatView != null) {
+                            contentParent.updateViewLayout(floatView, layoutParams);
                         }
                         return true;
                     case MotionEvent.ACTION_UP:
                         if (!isDragging && System.currentTimeMillis() - startTime < 300) {
-                            togglePanel(ctx);
+                            togglePanel(activity);
                         }
                         return false;
                 }
@@ -287,19 +291,12 @@ public class Hook implements IXposedHookLoadPackage {
         });
 
         try {
-            windowManager.addView(floatBtn, floatParams);
+            contentParent.addView(floatBtn, layoutParams);
             floatView = floatBtn;
-            Log.e(TAG, "悬浮按钮显示成功");
+            Log.e(TAG, "悬浮按钮显示成功（视图注入方式）");
         } catch (Throwable t) {
             Log.e(TAG, "悬浮按钮显示失败", t);
         }
-    }
-
-    private int getWindowType() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            return WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-        }
-        return WindowManager.LayoutParams.TYPE_PHONE;
     }
 
     private void togglePanel(Context ctx) {
@@ -311,9 +308,9 @@ public class Hook implements IXposedHookLoadPackage {
     }
 
     private void hidePanel() {
-        if (panelView != null && windowManager != null) {
+        if (panelView != null && contentParent != null) {
             try {
-                windowManager.removeView(panelView);
+                contentParent.removeView(panelView);
             } catch (Throwable t) {
                 Log.e(TAG, "移除面板失败", t);
             }
@@ -325,6 +322,15 @@ public class Hook implements IXposedHookLoadPackage {
     @SuppressLint("ClickableViewAccessibility")
     private void showPanel(Context ctx) {
         if (isPanelShowing) return;
+
+        if (contentParent == null && hostActivity != null) {
+            contentParent = (ViewGroup) hostActivity.findViewById(android.R.id.content);
+        }
+        if (contentParent == null) {
+            Log.e(TAG, "contentParent 为空，无法显示面板");
+            showFallbackDialog(ctx);
+            return;
+        }
 
         DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
         int screenWidth = dm.widthPixels;
@@ -410,18 +416,14 @@ public class Hook implements IXposedHookLoadPackage {
         });
         mainContainer.addView(saveBtn);
 
-        WindowManager.LayoutParams panelParams = new WindowManager.LayoutParams(
+        FrameLayout.LayoutParams panelLayoutParams = new FrameLayout.LayoutParams(
                 panelWidth,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                getWindowType(),
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT
+                FrameLayout.LayoutParams.WRAP_CONTENT
         );
-        panelParams.gravity = Gravity.CENTER;
-        panelParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
+        panelLayoutParams.gravity = Gravity.CENTER;
 
-        final int[] panelStartX = new int[1];
-        final int[] panelStartY = new int[1];
+        final int[] panelStartLeft = new int[1];
+        final int[] panelStartTop = new int[1];
         final float[] touchStartX = new float[1];
         final float[] touchStartY = new float[1];
 
@@ -430,18 +432,18 @@ public class Hook implements IXposedHookLoadPackage {
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        panelStartX[0] = panelParams.x;
-                        panelStartY[0] = panelParams.y;
+                        panelStartLeft[0] = panelLayoutParams.leftMargin;
+                        panelStartTop[0] = panelLayoutParams.topMargin;
                         touchStartX[0] = event.getRawX();
                         touchStartY[0] = event.getRawY();
                         return true;
                     case MotionEvent.ACTION_MOVE:
-                        panelParams.x = panelStartX[0] + (int) (event.getRawX() - touchStartX[0]);
-                        panelParams.y = panelStartY[0] + (int) (event.getRawY() - touchStartY[0]);
-                        panelParams.gravity = Gravity.TOP | Gravity.START;
-                        if (windowManager != null && panelView != null) {
+                        panelLayoutParams.leftMargin = panelStartLeft[0] + (int) (event.getRawX() - touchStartX[0]);
+                        panelLayoutParams.topMargin = panelStartTop[0] + (int) (event.getRawY() - touchStartY[0]);
+                        panelLayoutParams.gravity = Gravity.TOP | Gravity.START;
+                        if (contentParent != null && panelView != null) {
                             try {
-                                windowManager.updateViewLayout(panelView, panelParams);
+                                contentParent.updateViewLayout(panelView, panelLayoutParams);
                             } catch (Throwable t) {
                                 Log.e(TAG, "更新面板位置失败", t);
                             }
@@ -453,10 +455,10 @@ public class Hook implements IXposedHookLoadPackage {
         });
 
         try {
-            windowManager.addView(mainContainer, panelParams);
+            contentParent.addView(mainContainer, panelLayoutParams);
             panelView = mainContainer;
             isPanelShowing = true;
-            Log.e(TAG, "设置面板显示成功");
+            Log.e(TAG, "设置面板显示成功（视图注入方式）");
         } catch (Throwable t) {
             Log.e(TAG, "设置面板显示失败", t);
             showFallbackDialog(ctx);
