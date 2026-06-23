@@ -193,40 +193,15 @@ public class XposedBridge {
      * Xposed logging utility.
      */
     public static final class Log {
-        private static final String TAG = "Xposed";
-
         private Log() {}
 
-        public static int e(String msg) {
-            return android.util.Log.e(TAG, msg);
-        }
-
-        public static int e(String msg, Throwable tr) {
-            return android.util.Log.e(TAG, msg, tr);
-        }
-
-        public static int w(String msg) {
-            return android.util.Log.w(TAG, msg);
-        }
-
-        public static int w(String msg, Throwable tr) {
-            return android.util.Log.w(TAG, msg, tr);
-        }
-
-        public static int i(String msg) {
-            return android.util.Log.i(TAG, msg);
-        }
-
-        public static int i(String msg, Throwable tr) {
-            return android.util.Log.i(TAG, msg, tr);
-        }
-
-        public static int d(String msg) {
-            return android.util.Log.d(TAG, msg);
-        }
-
-        public static int d(String msg, Throwable tr) {
-            return android.util.Log.d(TAG, msg, tr);
-        }
+        public static int e(String msg) { return 0; }
+        public static int e(String msg, Throwable tr) { return 0; }
+        public static int w(String msg) { return 0; }
+        public static int w(String msg, Throwable tr) { return 0; }
+        public static int i(String msg) { return 0; }
+        public static int i(String msg, Throwable tr) { return 0; }
+        public static int d(String msg) { return 0; }
+        public static int d(String msg, Throwable tr) { return 0; }
     }
 }
