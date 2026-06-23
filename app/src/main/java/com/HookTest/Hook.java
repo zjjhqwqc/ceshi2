@@ -451,9 +451,9 @@ public class Hook implements IXposedHookLoadPackage {
         headerLayout.addView(tv);
 
         TextView statusToggle = new TextView(ctx);
-        statusToggle.setText(checked ? "开启" : "关闭");
+        statusToggle.setText(checked[0] ? "开启" : "关闭");
         statusToggle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        statusToggle.setTextColor(checked ? 0xFF4CAF50 : 0xFFF44336);
+        statusToggle.setTextColor(checked[0] ? 0xFF4CAF50 : 0xFFF44336);
         statusToggle.setGravity(Gravity.CENTER);
         statusToggle.setPadding(12, 4, 12, 4);
         LinearLayout.LayoutParams toggleParams = new LinearLayout.LayoutParams(
@@ -486,10 +486,10 @@ public class Hook implements IXposedHookLoadPackage {
         });
 
         statusToggle.setOnClickListener(v -> {
-            checked = !checked;
-            statusToggle.setText(checked ? "开启" : "关闭");
-            statusToggle.setTextColor(checked ? 0xFF4CAF50 : 0xFFF44336);
-            toggleListener.onCheckedChanged(null, checked);
+            checked[0] = !checked[0];
+            statusToggle.setText(checked[0] ? "开启" : "关闭");
+            statusToggle.setTextColor(checked[0] ? 0xFF4CAF50 : 0xFFF44336);
+            toggleListener.onCheckedChanged(null, checked[0]);
         });
 
         parentLayout.addView(sectionLayout);
