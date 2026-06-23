@@ -1,7 +1,5 @@
 package de.robv.android.xposed.callbacks;
 
-import android.content.res.XResources;
-
 /**
  * Callback for hooking into the initialization of an app's resources.
  */
@@ -13,7 +11,7 @@ public abstract class XC_InitPackageResources extends XCallback {
         /** The name of the package. */
         public String packageName;
         /** The resources object. */
-        public XResources res;
+        public Object res;
     }
 
     @Override
@@ -21,8 +19,5 @@ public abstract class XC_InitPackageResources extends XCallback {
         handleInitPackageResources((InitPackageResourcesParam) param);
     }
 
-    /**
-     * Called when resources for an app are initialized.
-     */
     protected abstract void handleInitPackageResources(InitPackageResourcesParam resparam) throws Throwable;
 }
