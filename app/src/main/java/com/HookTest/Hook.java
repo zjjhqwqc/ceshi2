@@ -136,6 +136,7 @@ public class Hook implements IXposedHookLoadPackage {
 
         Log.e(TAG, "包名匹配，开始Hook");
 
+        // 使用 Application.attach 获取 Context，同时注册 Activity 回调显示悬浮窗
         XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -149,21 +150,64 @@ public class Hook implements IXposedHookLoadPackage {
             }
         });
 
-        XposedHelpers.findAndHookMethod("com.alibaba.android.rimet.biz.LaunchHomeActivity",
-                lpparam.classLoader, "onCreate", Bundle.class, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                final Activity activity = (Activity) param.thisObject;
-                Log.e(TAG, "LaunchHomeActivity onCreate");
-                uiHandler.postDelayed(() -> {
-                    try {
-                        showFloatWindow(activity);
-                    } catch (Throwable t) {
-                        Log.e(TAG, "显示悬浮窗失败", t);
-                    }
-                }, 500);
+        // 如果 Application.attach 已经执行过（FPA框架延迟加载），直接用 classLoader 获取 Context
+        try {
+            Application app = (Application) XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null),
+                    "currentApplication");
+            if (app != null && appContext == null) {
+                appContext = app.getApplicationContext();
+                Log.e(TAG, "通过 currentApplication 获取到Context: " + appContext);
+                loadPrefs();
+                hookAMapLocation(lpparam);
+                hookDingTalkWiFi(lpparam);
+                hookDingTalkBluetooth(lpparam);
+                hookCamera(lpparam);
             }
-        });
+        } catch (Throwable t) {
+            Log.e(TAG, "currentApplication 获取失败", t);
+        }
+
+        // Hook LaunchHomeActivity 显示悬浮窗
+        try {
+            XposedHelpers.findAndHookMethod("com.alibaba.android.rimet.biz.LaunchHomeActivity",
+                    lpparam.classLoader, "onCreate", Bundle.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    final Activity activity = (Activity) param.thisObject;
+                    Log.e(TAG, "LaunchHomeActivity onCreate");
+                    uiHandler.postDelayed(() -> {
+                        try {
+                            showFloatWindow(activity);
+                        } catch (Throwable t) {
+                            Log.e(TAG, "显示悬浮窗失败", t);
+                        }
+                    }, 500);
+                }
+            });
+        } catch (Throwable t) {
+            Log.e(TAG, "Hook LaunchHomeActivity 失败，尝试 Hook 任意 Activity", t);
+            // 如果 LaunchHomeActivity 不存在，Hook 所有 Activity 的 onResume
+            XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {
+                private boolean shown = false;
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (shown) return;
+                    Activity activity = (Activity) param.thisObject;
+                    if (activity.getClass().getName().contains("alibaba")) {
+                        shown = true;
+                        Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
+                        uiHandler.postDelayed(() -> {
+                            try {
+                                showFloatWindow(activity);
+                            } catch (Throwable t2) {
+                                Log.e(TAG, "兜底显示悬浮窗失败", t2);
+                            }
+                        }, 500);
+                    }
+                }
+            });
+        }
     }
 
     // ======================== 悬浮窗UI ========================
