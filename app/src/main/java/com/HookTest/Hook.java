@@ -420,10 +420,12 @@ public class Hook implements IXposedHookLoadPackage {
     }
 
     // ---- 折叠模块 ----
-    private void addCollapsibleSection(Context ctx, LinearLayout parentLayout,
-            String title, boolean checked,
+    private void addCollapsibleSection(Context ctx, LinearLayout parentLayout, String title,
+            boolean isChecked,
             CompoundButton.OnCheckedChangeListener toggleListener,
             java.util.function.Consumer<LinearLayout> contentBuilder) {
+
+        final boolean[] checked = {isChecked};
 
         LinearLayout sectionLayout = new LinearLayout(ctx);
         sectionLayout.setOrientation(LinearLayout.VERTICAL);
