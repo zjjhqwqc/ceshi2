@@ -249,7 +249,7 @@ public class Hook implements IXposedHookLoadPackage {
         );
         layoutParams.gravity = Gravity.TOP | Gravity.END;
         layoutParams.topMargin = statusBarHeight + 50;
-        layoutParams.marginEnd = 16;
+        layoutParams.setMarginEnd(16);
 
         floatBtn.setOnTouchListener(new View.OnTouchListener() {
             private int initialMarginEnd, initialMarginTop;
@@ -261,7 +261,7 @@ public class Hook implements IXposedHookLoadPackage {
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        initialMarginEnd = layoutParams.marginEnd;
+                        initialMarginEnd = layoutParams.getMarginEnd();
                         initialMarginTop = layoutParams.topMargin;
                         initialTouchX = event.getRawX();
                         initialTouchY = event.getRawY();
@@ -274,7 +274,7 @@ public class Hook implements IXposedHookLoadPackage {
                         if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
                             isDragging = true;
                         }
-                        layoutParams.marginEnd = initialMarginEnd - dx;
+                        layoutParams.setMarginEnd(initialMarginEnd - dx);
                         layoutParams.topMargin = initialMarginTop + dy;
                         if (contentParent != null && floatView != null) {
                             contentParent.updateViewLayout(floatView, layoutParams);
