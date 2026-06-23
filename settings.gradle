@@ -6,4 +6,4 @@ pluginManagement {
     }
 }
 rootProject.name = "HookTest"
-include ':app'
+include ':app', ':xposed-api'
