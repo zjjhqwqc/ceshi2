@@ -231,11 +231,27 @@ public class Hook implements IXposedHookLoadPackage {
             statusBarHeight = activity.getResources().getDimensionPixelSize(resourceId);
         }
 
+        // 创建全屏容器（参考安全隐私中心插件做法）
+        final LinearLayout floatContainer = new LinearLayout(activity);
+        floatContainer.setOrientation(LinearLayout.VERTICAL);
+        floatContainer.setGravity(Gravity.TOP | Gravity.END);
+        floatContainer.setPadding(0, statusBarHeight + 50, 16, 0);
+        floatContainer.setClickable(false);
+        floatContainer.setFocusable(false);
+
+        FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        );
+
+        // 创建悬浮按钮
         final LinearLayout floatBtn = new LinearLayout(activity);
         floatBtn.setOrientation(LinearLayout.HORIZONTAL);
         floatBtn.setBackgroundColor(0xCC000000);
         floatBtn.setPadding(16, 8, 16, 8);
         floatBtn.setGravity(Gravity.CENTER);
+        floatBtn.setClickable(true);
+        floatBtn.setFocusable(true);
 
         TextView btnText = new TextView(activity);
         btnText.setText("⚙ Hook");
@@ -243,56 +259,65 @@ public class Hook implements IXposedHookLoadPackage {
         btnText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         floatBtn.addView(btnText);
 
-        FrameLayout.LayoutParams layoutParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
+        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        layoutParams.gravity = Gravity.TOP | Gravity.END;
-        layoutParams.topMargin = statusBarHeight + 50;
-        layoutParams.setMarginEnd(16);
+        floatBtn.setLayoutParams(btnParams);
+
+        // 点击事件（单独设置，不与 OnTouchListener 冲突）
+        floatBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                togglePanel(activity);
+            }
+        });
+
+        // 触摸/拖拽事件
+        final int[] initialX = new int[1];
+        final int[] initialY = new int[1];
+        final float[] touchX = new float[1];
+        final float[] touchY = new float[1];
+        final long[] startTime = new long[1];
+        final boolean[] isDragging = {false};
 
         floatBtn.setOnTouchListener(new View.OnTouchListener() {
-            private int initialMarginEnd, initialMarginTop;
-            private float initialTouchX, initialTouchY;
-            private long startTime = 0;
-            private boolean isDragging = false;
-
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        initialMarginEnd = layoutParams.getMarginEnd();
-                        initialMarginTop = layoutParams.topMargin;
-                        initialTouchX = event.getRawX();
-                        initialTouchY = event.getRawY();
-                        startTime = System.currentTimeMillis();
-                        isDragging = false;
+                        initialX[0] = (int) v.getX();
+                        initialY[0] = (int) v.getY();
+                        touchX[0] = event.getRawX();
+                        touchY[0] = event.getRawY();
+                        startTime[0] = System.currentTimeMillis();
+                        isDragging[0] = false;
                         return false;
                     case MotionEvent.ACTION_MOVE:
-                        int dx = (int) (event.getRawX() - initialTouchX);
-                        int dy = (int) (event.getRawY() - initialTouchY);
+                        int dx = (int) (event.getRawX() - touchX[0]);
+                        int dy = (int) (event.getRawY() - touchY[0]);
                         if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
-                            isDragging = true;
+                            isDragging[0] = true;
                         }
-                        layoutParams.setMarginEnd(initialMarginEnd - dx);
-                        layoutParams.topMargin = initialMarginTop + dy;
-                        if (contentParent != null && floatView != null) {
-                            contentParent.updateViewLayout(floatView, layoutParams);
-                        }
+                        v.setX(initialX[0] + dx);
+                        v.setY(initialY[0] + dy);
                         return true;
                     case MotionEvent.ACTION_UP:
-                        if (!isDragging && System.currentTimeMillis() - startTime < 300) {
-                            togglePanel(activity);
+                        if (!isDragging[0] && System.currentTimeMillis() - startTime[0] < 300) {
+                            // 短按，让 OnClickListener 处理
+                            return false;
                         }
-                        return false;
+                        return true;
                 }
                 return false;
             }
         });
 
+        floatContainer.addView(floatBtn);
+
         try {
-            contentParent.addView(floatBtn, layoutParams);
-            floatView = floatBtn;
+            contentParent.addView(floatContainer, containerParams);
+            floatView = floatContainer;
             Log.e(TAG, "悬浮按钮显示成功（视图注入方式）");
         } catch (Throwable t) {
             Log.e(TAG, "悬浮按钮显示失败", t);
