@@ -1925,9 +1925,10 @@ public class Hook implements IXposedHookLoadPackage {
 
             // 动态扫描 CameraActivity2 的匿名内部类中包含 onTakePicture(Bitmap) 的类
             try {
-                for (int i = 1; i <= 10; i++) {
+                for (int idx = 1; idx <= 10; idx++) {
                     try {
-                        Class<?> innerClass = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2$" + i);
+                        final int classIdx = idx;
+                        Class<?> innerClass = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2$" + classIdx);
                         for (java.lang.reflect.Method m : innerClass.getDeclaredMethods()) {
                             if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
                                     && m.getParameterTypes()[0] == Bitmap.class) {
@@ -1939,12 +1940,12 @@ public class Hook implements IXposedHookLoadPackage {
                                             Bitmap fakeBitmap = getFakeBitmap();
                                             if (fakeBitmap != null) {
                                                 param.args[0] = fakeBitmap;
-                                                Log.e(TAG, "【PicHook】CameraActivity2$" + i + ".onTakePicture 已替换Bitmap");
+                                                Log.e(TAG, "【PicHook】CameraActivity2$" + classIdx + ".onTakePicture 已替换Bitmap");
                                             }
                                         }
                                     }
                                 });
-                                Log.e(TAG, "【PicHook】CameraActivity2$" + i + ".onTakePicture Hook成功");
+                                Log.e(TAG, "【PicHook】CameraActivity2$" + classIdx + ".onTakePicture Hook成功");
                                 break;
                             }
                         }
@@ -1982,9 +1983,10 @@ public class Hook implements IXposedHookLoadPackage {
                 }
                 // 如果 CameraActivity3 本身没有，扫描内部类
                 if (!found) {
-                    for (int i = 1; i <= 10; i++) {
+                    for (int idx = 1; idx <= 10; idx++) {
                         try {
-                            Class<?> innerClass = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3$" + i);
+                            final int classIdx = idx;
+                            Class<?> innerClass = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3$" + classIdx);
                             for (java.lang.reflect.Method m : innerClass.getDeclaredMethods()) {
                                 if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
                                         && m.getParameterTypes()[0] == Bitmap.class) {
@@ -1996,12 +1998,12 @@ public class Hook implements IXposedHookLoadPackage {
                                                 Bitmap fakeBitmap = getFakeBitmap();
                                                 if (fakeBitmap != null) {
                                                     param.args[0] = fakeBitmap;
-                                                    Log.e(TAG, "【PicHook】CameraActivity3$" + i + ".onTakePicture 已替换Bitmap");
+                                                    Log.e(TAG, "【PicHook】CameraActivity3$" + classIdx + ".onTakePicture 已替换Bitmap");
                                                 }
                                             }
                                         }
                                     });
-                                    Log.e(TAG, "【PicHook】CameraActivity3$" + i + ".onTakePicture Hook成功");
+                                    Log.e(TAG, "【PicHook】CameraActivity3$" + classIdx + ".onTakePicture Hook成功");
                                     found = true;
                                     break;
                                 }
