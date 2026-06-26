@@ -2044,7 +2044,7 @@ public class Hook implements IXposedHookLoadPackage {
                                         && m.getParameterTypes()[0] == byte[].class
                                         && m.getParameterTypes()[1] == android.hardware.Camera.class) {
                                     
-                                    de.robv.android.xposed.XposedBridge.hookMethod(m, new XC_MethodHook() {
+                                    de.robv.android.xposed.XposedBridge.hookMethod(m, new de.robv.android.xposed.XC_MethodHook() {
                                         @Override
                                         protected void beforeHookedMethod(MethodHookParam param2) throws Throwable {
                                             if (cameraEnabled) {
