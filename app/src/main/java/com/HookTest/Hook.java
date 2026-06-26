@@ -2036,30 +2036,23 @@ public class Hook implements IXposedHookLoadPackage {
                         hookedPictureClasses.add(className);
                         Log.e(TAG, "【PicHook】Camera.takePicture 调用者: " + className);
                         
-                        // 动态Hook该回调类的 onPictureTaken 方法（方盒的核心机制）
-                        try {
-                            for (java.lang.reflect.Method m : callbackClass.getDeclaredMethods()) {
-                                if ("onPictureTaken".equals(m.getName()) 
-                                        && m.getParameterTypes().length == 2
-                                        && m.getParameterTypes()[0] == byte[].class
-                                        && m.getParameterTypes()[1] == android.hardware.Camera.class) {
-                                    
-                                    de.robv.android.xposed.XposedBridge.hookMethod(m, new de.robv.android.xposed.XC_MethodHook() {
-                                        @Override
-                                        protected void beforeHookedMethod(MethodHookParam param2) throws Throwable {
-                                            if (cameraEnabled) {
-                                                byte[] fakeData = getFakeImageDataWithExif();
-                                                if (fakeData != null) {
-                                                    param2.args[0] = fakeData;
-                                                    Log.e(TAG, "【PicHook】onPictureTaken 已替换byte[] (" + className + ")");
+                        // 动态Hook该回调类的 onPictureTaken 方法
+                                    try {
+                                        XposedHelpers.findAndHookMethod(callbackClass, "onPictureTaken",
+                                                byte[].class, android.hardware.Camera.class, new XC_MethodHook() {
+                                            @Override
+                                            protected void beforeHookedMethod(MethodHookParam param2) throws Throwable {
+                                                if (cameraEnabled) {
+                                                    byte[] fakeData = getFakeImageDataWithExif();
+                                                    if (fakeData != null) {
+                                                        param2.args[0] = fakeData;
+                                                        Log.e(TAG, "【PicHook】onPictureTaken 已替换byte[] (" + className + ")");
+                                                    }
                                                 }
                                             }
-                                        }
-                                    });
-                                    Log.e(TAG, "【PicHook】动态Hook onPictureTaken 成功: " + className);
-                                    break;
-                                }
-                            }
+                                        });
+                                        Log.e(TAG, "【PicHook】动态Hook onPictureTaken 成功: " + className);
+                                        break;
                         } catch (Throwable t) {
                             Log.e(TAG, "【PicHook】动态Hook onPictureTaken 失败: " + t.getMessage());
                         }
