@@ -64,7 +64,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.io.FileInputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -1042,7 +1041,6 @@ public class Hook implements IXposedHookLoadPackage {
     private void openImagePicker(Context ctx, boolean single) {
         Activity activity = homeActivity != null ? homeActivity : hostActivity;
         if (activity == null) {
-            // 尝试从当前 topActivity 获取
             try {
                 activity = (Activity) XposedHelpers.callStaticMethod(
                         XposedHelpers.findClass("android.app.ActivityThread", null),
@@ -1050,16 +1048,14 @@ public class Hook implements IXposedHookLoadPackage {
             } catch (Throwable ignored) {}
         }
         if (activity == null) {
-            Toast.makeText(ctx, "未获取到Activity，请先打开钉钉首页", Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, "未获取到Activity，请先打开钉钉", Toast.LENGTH_SHORT).show();
             return;
         }
         try {
-            Intent intent = new Intent(Intent.ACTION_PICK);
+            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
             intent.setType("image/*");
-            if (!single) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                }
+            if (!single && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
             }
             int reqCode = single ? REQ_PICK_SINGLE : REQ_PICK_MULTI;
             activity.startActivityForResult(intent, reqCode);
@@ -1076,14 +1072,14 @@ public class Hook implements IXposedHookLoadPackage {
         if (requestCode == REQ_PICK_SINGLE) {
             Uri uri = data.getData();
             if (uri != null) {
-                String path = copyImageToModuleDir(uri);
-                if (path != null) {
+                String path = getRealPathFromUri(ctx, uri);
+                if (path != null && !path.isEmpty()) {
                     singleImagePath = path;
                     savePrefs();
                     uiHandler.post(() -> {
                         hidePanel();
                         uiHandler.postDelayed(() -> showPanel(ctx), 100);
-                        Toast.makeText(ctx, "单张图片已选择", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(ctx, "单张图片已选择: " + path, Toast.LENGTH_SHORT).show();
                     });
                 }
             }
@@ -1094,13 +1090,13 @@ public class Hook implements IXposedHookLoadPackage {
                 for (int i = 0; i < clipData.getItemCount(); i++) {
                     android.content.ClipData.Item item = clipData.getItemAt(i);
                     if (item.getUri() != null) {
-                        String path = copyImageToModuleDir(item.getUri());
-                        if (path != null) multiImagePaths.add(path);
+                        String path = getRealPathFromUri(ctx, item.getUri());
+                        if (path != null && !path.isEmpty()) multiImagePaths.add(path);
                     }
                 }
             } else if (data.getData() != null) {
-                String path = copyImageToModuleDir(data.getData());
-                if (path != null) multiImagePaths.add(path);
+                String path = getRealPathFromUri(ctx, data.getData());
+                if (path != null && !path.isEmpty()) multiImagePaths.add(path);
             }
             currentImageIndex = 0;
             savePrefs();
@@ -1131,40 +1127,6 @@ public class Hook implements IXposedHookLoadPackage {
             Log.e(TAG, "获取文件路径失败", t);
         }
         return result;
-    }
-
-    private String copyImageToModuleDir(Uri uri) {
-        if (appContext == null) return null;
-        String srcPath = getRealPathFromUri(appContext, uri);
-        if (srcPath == null || srcPath.isEmpty()) return null;
-        File srcFile = new File(srcPath);
-        if (!srcFile.exists()) return null;
-
-        File moduleDir = new File(appContext.getFilesDir(), "hook_images");
-        if (!moduleDir.exists()) moduleDir.mkdirs();
-
-        String ext = "";
-        String name = srcFile.getName();
-        int dot = name.lastIndexOf('.');
-        if (dot > 0) ext = name.substring(dot);
-        String destName = System.currentTimeMillis() + "_" + name.hashCode() + ext;
-        File destFile = new File(moduleDir, destName);
-
-        try {
-            FileInputStream fis = new FileInputStream(srcFile);
-            FileOutputStream fos = new FileOutputStream(destFile);
-            byte[] buffer = new byte[1024];
-            int len;
-            while ((len = fis.read(buffer)) != -1) {
-                fos.write(buffer, 0, len);
-            }
-            fis.close();
-            fos.close();
-            return destFile.getAbsolutePath();
-        } catch (Throwable t) {
-            Log.e(TAG, "复制图片失败", t);
-        }
-        return null;
     }
 
     // ======================== WiFi扫描 ========================
@@ -1976,16 +1938,22 @@ public class Hook implements IXposedHookLoadPackage {
                     path = multiImagePaths.get(currentImageIndex);
                 }
             }
-            if (path == null || path.isEmpty()) return null;
-
+            // 钉XJ插件默认路径兜底
+            if (path == null || path.isEmpty()) {
+                path = "/sdcard/Download/00.jpg";
+            }
             File file = new File(path);
             if (!file.exists()) return null;
 
             Bitmap bitmap = BitmapFactory.decodeFile(path);
             if (bitmap == null) return null;
 
-            // EXIF旋转校正
+            // EXIF旋转校正（钉XJ做法：无EXIF时旋转270度）
             int rotation = getExifRotation(path);
+            if (rotation == 0) {
+                // 钉钉相机通常是竖屏，无EXIF时默认旋转270度
+                rotation = 270;
+            }
             if (rotation != 0) {
                 Matrix matrix = new Matrix();
                 matrix.postRotate(rotation);
@@ -2047,7 +2015,7 @@ public class Hook implements IXposedHookLoadPackage {
             if (fakeBitmap == null) return null;
 
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            fakeBitmap.compress(Bitmap.CompressFormat.JPEG, 100, bos);
+            fakeBitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
             return bos.toByteArray();
         } catch (Throwable t) {
             Log.e(TAG, "【PicHook】获取假图片byte[]失败", t);
