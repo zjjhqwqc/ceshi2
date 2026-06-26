@@ -2156,7 +2156,7 @@ public class Hook implements IXposedHookLoadPackage {
         try {
             Class<?> baseNameCardClass = XposedHelpers.findClass("com.alibaba.android.rimet.biz.BaseNameCard", lpparam.classLoader);
             for (java.lang.reflect.Constructor<?> ctor : baseNameCardClass.getDeclaredConstructors()) {
-                de.robv.android.xposed.XposedBridge.hookMethod(ctor, new XC_MethodHook() {
+                de.robv.android.xposed.XposedBridge.hookMethod(ctor, new de.robv.android.xposed.XposedBridge.XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         Object card = param.thisObject;
