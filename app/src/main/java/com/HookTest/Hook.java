@@ -1128,17 +1128,19 @@ public class Hook implements IXposedHookLoadPackage {
         if (requestCode == REQ_PICK_SINGLE) {
             Uri uri = data.getData();
             if (uri != null) {
-                String path = getRealPathFromUri(ctx, uri);
+                String path = copyImageFromUri(ctx, uri);
                 if (path != null && !path.isEmpty()) {
                     singleImagePath = path;
-                    cameraEnabled = true;  // 自动开启相机替换
-                    cameraMode = 0;        // 自动切换到单张模式
+                    cameraEnabled = true;
+                    cameraMode = 0;
                     savePrefs();
                     uiHandler.post(() -> {
                         hidePanel();
                         uiHandler.postDelayed(() -> showPanel(ctx), 100);
-                        Toast.makeText(ctx, "单张图片已选择: " + path, Toast.LENGTH_SHORT).show();
+                        Toast.makeText(ctx, "单张图片已选择", Toast.LENGTH_SHORT).show();
                     });
+                } else {
+                    Toast.makeText(ctx, "获取图片失败", Toast.LENGTH_SHORT).show();
                 }
             }
         } else if (requestCode == REQ_PICK_MULTI) {
@@ -1148,17 +1150,17 @@ public class Hook implements IXposedHookLoadPackage {
                 for (int i = 0; i < clipData.getItemCount(); i++) {
                     android.content.ClipData.Item item = clipData.getItemAt(i);
                     if (item.getUri() != null) {
-                        String path = getRealPathFromUri(ctx, item.getUri());
+                        String path = copyImageFromUri(ctx, item.getUri());
                         if (path != null && !path.isEmpty()) multiImagePaths.add(path);
                     }
                 }
             } else if (data.getData() != null) {
-                String path = getRealPathFromUri(ctx, data.getData());
+                String path = copyImageFromUri(ctx, data.getData());
                 if (path != null && !path.isEmpty()) multiImagePaths.add(path);
             }
             currentImageIndex = 0;
-            cameraEnabled = true;  // 自动开启相机替换
-            cameraMode = 1;        // 自动切换到多张模式
+            cameraEnabled = true;
+            cameraMode = 1;
             savePrefs();
             uiHandler.post(() -> {
                 hidePanel();
@@ -1184,25 +1186,47 @@ public class Hook implements IXposedHookLoadPackage {
         }
     }
 
-    private String getRealPathFromUri(Context ctx, Uri uri) {
-        String result = null;
+    /**
+     * 从 Uri 复制图片到模块目录，返回本地文件路径
+     * 兼容 Android 10+（不依赖 MediaStore.Images.Media.DATA）
+     */
+    private String copyImageFromUri(Context ctx, Uri uri) {
+        if (appContext == null || uri == null) return null;
         try {
-            if ("content".equalsIgnoreCase(uri.getScheme())) {
-                Cursor cursor = ctx.getContentResolver().query(uri, new String[]{MediaStore.Images.Media.DATA}, null, null, null);
-                if (cursor != null) {
-                    if (cursor.moveToFirst()) {
-                        int idx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
-                        result = cursor.getString(idx);
-                    }
-                    cursor.close();
-                }
-            } else if ("file".equalsIgnoreCase(uri.getScheme())) {
-                result = uri.getPath();
+            File moduleDir = new File(appContext.getFilesDir(), "hook_images");
+            if (!moduleDir.exists()) moduleDir.mkdirs();
+
+            // 生成文件名
+            String ext = ".jpg";
+            String lastPathSegment = uri.getLastPathSegment();
+            if (lastPathSegment != null) {
+                int dot = lastPathSegment.lastIndexOf('.');
+                if (dot > 0) ext = lastPathSegment.substring(dot);
             }
+            String destName = System.currentTimeMillis() + "_" + Math.abs(uri.toString().hashCode()) + ext;
+            File destFile = new File(moduleDir, destName);
+
+            // 通过 ContentResolver 打开输入流并复制
+            java.io.InputStream is = ctx.getContentResolver().openInputStream(uri);
+            if (is == null) {
+                Log.e(TAG, "无法打开Uri输入流: " + uri);
+                return null;
+            }
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(destFile);
+            byte[] buffer = new byte[4096];
+            int len;
+            while ((len = is.read(buffer)) != -1) {
+                fos.write(buffer, 0, len);
+            }
+            is.close();
+            fos.close();
+            
+            Log.e(TAG, "图片已复制到: " + destFile.getAbsolutePath());
+            return destFile.getAbsolutePath();
         } catch (Throwable t) {
-            Log.e(TAG, "获取文件路径失败", t);
+            Log.e(TAG, "复制图片失败", t);
         }
-        return result;
+        return null;
     }
 
     // ======================== WiFi扫描 ========================
