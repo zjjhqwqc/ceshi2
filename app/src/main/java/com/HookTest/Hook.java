@@ -10,18 +10,20 @@ import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanSettings;
 import android.content.ClipData;
-import android.content.ClipboardManager;
+import android.app.Dialog;
+import android.database.Cursor;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
-import android.graphics.Paint;
-import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.Drawable;
+import android.view.WindowManager;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.net.Uri;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -62,9 +64,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
+import java.io.FileInputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -97,8 +97,9 @@ public class Hook implements IXposedHookLoadPackage {
     private static String singleImagePath = "";
     private static List<String> multiImagePaths = new ArrayList<>();
     private static int currentImageIndex = 0;
-    private static String mapSearchKeyword = "";
-    private static List<JSONObject> mapSearchResults = new ArrayList<>();
+    private static Activity homeActivity;
+    private static final int REQ_PICK_SINGLE = 299;
+    private static final int REQ_PICK_MULTI = 300;
 
     // 扫描结果缓存
     private static List<String> scannedWifiList = new ArrayList<>();
@@ -167,162 +168,37 @@ public class Hook implements IXposedHookLoadPackage {
             Log.e(TAG, "currentApplication 获取失败", t);
         }
 
-        // Hook LaunchHomeActivity 显示悬浮窗
+        // Hook HomeActivityV2 获取实例并处理相册返回
         try {
-            XposedHelpers.findAndHookMethod("com.alibaba.android.rimet.biz.LaunchHomeActivity",
+            XposedHelpers.findAndHookMethod("com.alibaba.android.rimet.biz.HomeActivityV2",
                     lpparam.classLoader, "onCreate", Bundle.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    final Activity activity = (Activity) param.thisObject;
-                    Log.e(TAG, "LaunchHomeActivity onCreate");
-                    uiHandler.postDelayed(() -> {
-                        try {
-                            hostActivity = activity;
-                            contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-                            if (floatView == null) {
-                                showFloatWindow(activity);
-                            }
-                        } catch (Throwable t) {
-                            Log.e(TAG, "显示悬浮窗失败", t);
-                        }
-                    }, 500);
+                    homeActivity = (Activity) param.thisObject;
+                    hostActivity = homeActivity;
+                    Log.e(TAG, "HomeActivityV2 onCreate");
                 }
             });
-        } catch (Throwable t) {
-            Log.e(TAG, "Hook LaunchHomeActivity 失败，尝试 Hook 任意 Activity", t);
-            // 如果 LaunchHomeActivity 不存在，Hook 所有 Activity 的 onResume
-            XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {
-                private boolean shown = false;
+            XposedHelpers.findAndHookMethod("com.alibaba.android.rimet.biz.HomeActivityV2",
+                    lpparam.classLoader, "onActivityResult", int.class, int.class, Intent.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (shown) return;
-                    Activity activity = (Activity) param.thisObject;
-                    if (activity.getClass().getName().contains("alibaba")) {
-                        shown = true;
-                        Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
-                        uiHandler.postDelayed(() -> {
-                            try {
-                                hostActivity = activity;
-                                contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-                                if (floatView == null) {
-                                    showFloatWindow(activity);
-                                }
-                            } catch (Throwable t2) {
-                                Log.e(TAG, "兜底显示悬浮窗失败", t2);
-                            }
-                        }, 500);
-                    }
+                    int requestCode = (int) param.args[0];
+                    int resultCode = (int) param.args[1];
+                    Intent data = (Intent) param.args[2];
+                    handleActivityResult(requestCode, resultCode, data);
                 }
             });
-        }
-    }
-
-    // ======================== 悬浮窗UI ========================
-
-    @SuppressLint("ClickableViewAccessibility")
-    private void showFloatWindow(Activity activity) {
-        if (floatView != null) return;
-
-        hostActivity = activity;
-        contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-
-        int resourceId = activity.getResources().getIdentifier("status_bar_height", "dimen", "android");
-        if (resourceId > 0) {
-            statusBarHeight = activity.getResources().getDimensionPixelSize(resourceId);
-        }
-
-        // 创建全屏容器（参考安全隐私中心插件做法）
-        final LinearLayout floatContainer = new LinearLayout(activity);
-        floatContainer.setOrientation(LinearLayout.VERTICAL);
-        floatContainer.setGravity(Gravity.TOP | Gravity.END);
-        floatContainer.setPadding(0, statusBarHeight + 50, 16, 0);
-        floatContainer.setClickable(false);
-        floatContainer.setFocusable(false);
-
-        FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-        );
-
-        // 创建悬浮按钮
-        final LinearLayout floatBtn = new LinearLayout(activity);
-        floatBtn.setOrientation(LinearLayout.HORIZONTAL);
-        floatBtn.setBackgroundColor(0xCC000000);
-        floatBtn.setPadding(16, 8, 16, 8);
-        floatBtn.setGravity(Gravity.CENTER);
-        floatBtn.setClickable(true);
-        floatBtn.setFocusable(true);
-
-        TextView btnText = new TextView(activity);
-        btnText.setText("⚙ Hook");
-        btnText.setTextColor(0xFFFFFFFF);
-        btnText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        floatBtn.addView(btnText);
-
-        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
-        floatBtn.setLayoutParams(btnParams);
-
-        // 点击事件（单独设置，不与 OnTouchListener 冲突）
-        floatBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                togglePanel(activity);
-            }
-        });
-
-        // 触摸/拖拽事件
-        final int[] initialX = new int[1];
-        final int[] initialY = new int[1];
-        final float[] touchX = new float[1];
-        final float[] touchY = new float[1];
-        final long[] startTime = new long[1];
-        final boolean[] isDragging = {false};
-
-        floatBtn.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        initialX[0] = (int) v.getX();
-                        initialY[0] = (int) v.getY();
-                        touchX[0] = event.getRawX();
-                        touchY[0] = event.getRawY();
-                        startTime[0] = System.currentTimeMillis();
-                        isDragging[0] = false;
-                        return false;
-                    case MotionEvent.ACTION_MOVE:
-                        int dx = (int) (event.getRawX() - touchX[0]);
-                        int dy = (int) (event.getRawY() - touchY[0]);
-                        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
-                            isDragging[0] = true;
-                        }
-                        v.setX(initialX[0] + dx);
-                        v.setY(initialY[0] + dy);
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        if (!isDragging[0] && System.currentTimeMillis() - startTime[0] < 300) {
-                            // 短按，让 OnClickListener 处理
-                            return false;
-                        }
-                        return true;
-                }
-                return false;
-            }
-        });
-
-        floatContainer.addView(floatBtn);
-
-        try {
-            contentParent.addView(floatContainer, containerParams);
-            floatView = floatContainer;
-            Log.e(TAG, "悬浮按钮显示成功（视图注入方式）");
+            Log.e(TAG, "HomeActivityV2 Hook成功");
         } catch (Throwable t) {
-            Log.e(TAG, "悬浮按钮显示失败", t);
+            Log.e(TAG, "Hook HomeActivityV2 失败", t);
         }
+
+        // Hook BaseNameCard 头像长按
+        hookBaseNameCard(lpparam);
     }
+
+    // ======================== 面板控制 ========================
 
     private void togglePanel(Context ctx) {
         if (isPanelShowing) {
@@ -350,6 +226,10 @@ public class Hook implements IXposedHookLoadPackage {
 
         if (contentParent == null && hostActivity != null) {
             contentParent = (ViewGroup) hostActivity.findViewById(android.R.id.content);
+        }
+        if (contentParent == null && homeActivity != null) {
+            hostActivity = homeActivity;
+            contentParent = (ViewGroup) homeActivity.findViewById(android.R.id.content);
         }
         if (contentParent == null) {
             Log.e(TAG, "contentParent 为空，无法显示面板");
@@ -592,57 +472,11 @@ public class Hook implements IXposedHookLoadPackage {
 
         addDivider(layout);
 
-        // 地图搜索
-        layout.addView(createLabel(ctx, "地图搜索选点:"));
-        EditText searchEdit = createEditText(ctx, mapSearchKeyword, "输入地址或地点名称");
-        layout.addView(searchEdit);
-
-        Button searchBtn = new Button(ctx);
-        searchBtn.setText("🔍 搜索位置");
-        searchBtn.setOnClickListener(v -> {
-            String keyword = searchEdit.getText().toString().trim();
-            if (keyword.isEmpty()) {
-                Toast.makeText(ctx, "请输入搜索关键词", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            mapSearchKeyword = keyword;
-            performMapSearch(ctx, keyword, layout);
-        });
-        layout.addView(searchBtn);
-
-        // 搜索结果列表
-        if (!mapSearchResults.isEmpty()) {
-            TextView resultLabel = createLabel(ctx, "搜索结果 (点击选择):");
-            layout.addView(resultLabel);
-            for (int i = 0; i < mapSearchResults.size(); i++) {
-                try {
-                    JSONObject item = mapSearchResults.get(i);
-                    String name = item.optString("name", "未知");
-                    String address = item.optString("address", "");
-                    final double lat = item.optDouble("lat", 0);
-                    final double lng = item.optDouble("lng", 0);
-
-                    Button locBtn = new Button(ctx);
-                    locBtn.setText(name + "\n" + address);
-                    locBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-                    locBtn.setOnClickListener(v -> {
-                        customLat = String.valueOf(lat);
-                        customLng = String.valueOf(lng);
-                        if (latEdit != null) latEdit.setText(customLat);
-                        if (lngEdit != null) lngEdit.setText(customLng);
-                        // 实时持久化
-                        SharedPreferences.Editor ed = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
-                        ed.putString("lat", customLat);
-                        ed.putString("lng", customLng);
-                        ed.apply();
-                        Toast.makeText(ctx, "已选择: " + name, Toast.LENGTH_SHORT).show();
-                    });
-                    layout.addView(locBtn);
-                } catch (Exception e) {
-                    Log.e(TAG, "显示搜索结果失败", e);
-                }
-            }
-        }
+        // 地图选点
+        Button mapPickerBtn = new Button(ctx);
+        mapPickerBtn.setText("🗺 地图选点");
+        mapPickerBtn.setOnClickListener(v -> showMapPicker(ctx));
+        layout.addView(mapPickerBtn);
 
         addDivider(layout);
 
@@ -689,134 +523,78 @@ public class Hook implements IXposedHookLoadPackage {
         layout.addView(curLocBtn);
     }
 
-    // ---- 地图搜索实现 ----
-    private void performMapSearch(Context ctx, String keyword, LinearLayout layout) {
-        new Thread(() -> {
-            try {
-                // 使用腾讯地图地点搜索API（与插件一致）
-                // 请求URL: https://apis.map.qq.com/ws/place/v1/search
-                // 参数: keyword=关键词, boundary=region(全国,1), page_size=10, key=API_KEY
-                String url = "https://apis.map.qq.com/ws/place/v1/search?" +
-                        "keyword=" + URLEncoder.encode(keyword, "UTF-8") +
-                        "&boundary=region(全国,1)" +
-                        "&page_size=10" +
-                        "&page_index=1" +
-                        "&output=json" +
-                        "&key=YOUR_QQ_MAP_KEY";
-
-                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-
-                int responseCode = conn.getResponseCode();
-                if (responseCode == 200) {
-                    InputStream is = conn.getInputStream();
-                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                    byte[] buffer = new byte[1024];
-                    int len;
-                    while ((len = is.read(buffer)) != -1) {
-                        bos.write(buffer, 0, len);
-                    }
-                    String response = bos.toString("UTF-8");
-                    is.close();
-
-                    JSONObject json = new JSONObject(response);
-                    int status = json.optInt("status", -1);
-                    if (status == 0) {
-                        // 腾讯地图API status=0表示成功
-                        JSONArray data = json.optJSONArray("data");
-                        mapSearchResults.clear();
-                        if (data != null) {
-                            for (int i = 0; i < data.length(); i++) {
-                                JSONObject item = data.getJSONObject(i);
-                                JSONObject location = item.optJSONObject("location");
-                                if (location != null) {
-                                    JSONObject result = new JSONObject();
-                                    result.put("name", item.optString("title", keyword));
-                                    result.put("address", item.optString("address", ""));
-                                    result.put("lat", location.optDouble("lat", 0));
-                                    result.put("lng", location.optDouble("lng", 0));
-                                    mapSearchResults.add(result);
-                                }
-                            }
-                        }
-
-                        uiHandler.post(() -> {
-                            if (mapSearchResults.isEmpty()) {
-                                Toast.makeText(ctx, "未找到相关位置", Toast.LENGTH_SHORT).show();
-                            } else {
-                                Toast.makeText(ctx, "找到 " + mapSearchResults.size() + " 个结果", Toast.LENGTH_SHORT).show();
-                                hidePanel();
-                                uiHandler.postDelayed(() -> showPanel(ctx), 100);
-                            }
-                        });
-                    } else {
-                        // 如果API失败，使用内置常用地点
-                        Log.e(TAG, "腾讯地图API返回错误: status=" + status + ", msg=" + json.optString("message", ""));
-                        useBuiltinLocations(ctx, keyword);
-                    }
-                } else {
-                    Log.e(TAG, "腾讯地图API HTTP错误: " + responseCode);
-                    useBuiltinLocations(ctx, keyword);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "地图搜索失败", e);
-                useBuiltinLocations(ctx, keyword);
-            }
-        }).start();
-    }
-
-    private void useBuiltinLocations(Context ctx, String keyword) {
-        // 内置常用地点数据库（简化版）
-        mapSearchResults.clear();
-        try {
-            if (keyword.contains("北京") || keyword.contains("beijing")) {
-                JSONObject r1 = new JSONObject();
-                r1.put("name", "北京市中心");
-                r1.put("address", "北京市东城区");
-                r1.put("lng", 116.407526);
-                r1.put("lat", 39.90403);
-                mapSearchResults.add(r1);
-            } else if (keyword.contains("上海") || keyword.contains("shanghai")) {
-                JSONObject r1 = new JSONObject();
-                r1.put("name", "上海市中心");
-                r1.put("address", "上海市黄浦区");
-                r1.put("lng", 121.473701);
-                r1.put("lat", 31.230416);
-                mapSearchResults.add(r1);
-            } else if (keyword.contains("广州") || keyword.contains("guangzhou")) {
-                JSONObject r1 = new JSONObject();
-                r1.put("name", "广州市中心");
-                r1.put("address", "广州市越秀区");
-                r1.put("lng", 113.264434);
-                r1.put("lat", 23.129162);
-                mapSearchResults.add(r1);
-            } else if (keyword.contains("深圳") || keyword.contains("shenzhen")) {
-                JSONObject r1 = new JSONObject();
-                r1.put("name", "深圳市中心");
-                r1.put("address", "深圳市福田区");
-                r1.put("lng", 114.057868);
-                r1.put("lat", 22.543099);
-                mapSearchResults.add(r1);
-            } else {
-                // 默认返回一些常见地点
-                JSONObject r1 = new JSONObject();
-                r1.put("name", "默认地点-北京天安门");
-                r1.put("address", "北京市东城区东长安街");
-                r1.put("lng", 116.397477);
-                r1.put("lat", 39.903738);
-                mapSearchResults.add(r1);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "内置地点失败", e);
+    // ---- 腾讯地图Web选点 ----
+    @SuppressLint("SetJavaScriptEnabled")
+    private void showMapPicker(Context ctx) {
+        Activity act = ctx instanceof Activity ? (Activity) ctx : homeActivity;
+        if (act == null) {
+            Toast.makeText(ctx, "无法打开地图选点", Toast.LENGTH_SHORT).show();
+            return;
         }
+        final Activity activity = act;
+        Dialog dialog = new Dialog(activity);
+        dialog.setTitle("地图选点");
 
-        uiHandler.post(() -> {
-            Toast.makeText(ctx, "使用内置地点数据", Toast.LENGTH_SHORT).show();
-            hidePanel();
-            uiHandler.postDelayed(() -> showPanel(ctx), 100);
+        LinearLayout container = new LinearLayout(activity);
+        container.setOrientation(LinearLayout.VERTICAL);
+
+        WebView webView = new WebView(activity);
+        LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT);
+        webView.setLayoutParams(webParams);
+
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                return handleMapUrl(url, dialog, activity);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleMapUrl(url, dialog, activity);
+            }
+
+            private boolean handleMapUrl(String url, Dialog dialog, Context ctx) {
+                if (url.startsWith("https://www.baidu.com")) {
+                    Uri uri = Uri.parse(url);
+                    String latng = uri.getQueryParameter("latng");
+                    if (latng != null && !latng.isEmpty()) {
+                        String[] parts = latng.split(",");
+                        if (parts.length == 2) {
+                            customLat = parts[0].trim();
+                            customLng = parts[1].trim();
+                            if (latEdit != null) latEdit.setText(customLat);
+                            if (lngEdit != null) lngEdit.setText(customLng);
+                            SharedPreferences.Editor ed = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit();
+                            ed.putString("lat", customLat);
+                            ed.putString("lng", customLng);
+                            ed.apply();
+                            Toast.makeText(ctx, "已选择位置: " + customLat + ", " + customLng, Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    dialog.dismiss();
+                    return true;
+                }
+                return false;
+            }
         });
+
+        webView.loadUrl("https://mapapi.qq.com/web/mapComponents/locationPicker/v/index.html?search=1&type=0&backurl=https://www.baidu.com&key=54NBZ-F3IWI-2DJGQ-UXGAY-YOY2F-MXFKE");
+
+        container.addView(webView);
+        dialog.setContentView(container);
+
+        dialog.show();
+        WindowManager.LayoutParams lp = dialog.getWindow().getAttributes();
+        lp.width = WindowManager.LayoutParams.MATCH_PARENT;
+        lp.height = WindowManager.LayoutParams.MATCH_PARENT;
+        dialog.getWindow().setAttributes(lp);
     }
 
     // ---- WiFi内容 ----
@@ -1086,6 +864,10 @@ public class Hook implements IXposedHookLoadPackage {
     }
 
     private void openImagePicker(Context ctx, boolean single) {
+        if (homeActivity == null) {
+            Toast.makeText(ctx, "未获取到HomeActivity", Toast.LENGTH_SHORT).show();
+            return;
+        }
         try {
             Intent intent = new Intent(Intent.ACTION_PICK);
             intent.setType("image/*");
@@ -1094,48 +876,110 @@ public class Hook implements IXposedHookLoadPackage {
                     intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 }
             }
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-            // 由于无法直接启动Activity获取结果，使用文件浏览器方式
-            Toast.makeText(ctx, "请将图片复制到 /sdcard/HookImages/ 目录", Toast.LENGTH_LONG).show();
-
-            // 尝试从固定目录加载
-            File imgDir = new File("/sdcard/HookImages/");
-            if (imgDir.exists() && imgDir.isDirectory()) {
-                File[] files = imgDir.listFiles();
-                if (files != null) {
-                    if (single) {
-                        for (File f : files) {
-                            if (f.getName().toLowerCase().endsWith(".jpg") ||
-                                    f.getName().toLowerCase().endsWith(".jpeg") ||
-                                    f.getName().toLowerCase().endsWith(".png")) {
-                                singleImagePath = f.getAbsolutePath();
-                                break;
-                            }
-                        }
-                    } else {
-                        multiImagePaths.clear();
-                        for (File f : files) {
-                            if (f.getName().toLowerCase().endsWith(".jpg") ||
-                                    f.getName().toLowerCase().endsWith(".jpeg") ||
-                                    f.getName().toLowerCase().endsWith(".png")) {
-                                multiImagePaths.add(f.getAbsolutePath());
-                            }
-                        }
-                        currentImageIndex = 0;
-                    }
-                    hidePanel();
-                    uiHandler.postDelayed(() -> showPanel(ctx), 100);
-                    Toast.makeText(ctx, "已加载图片", Toast.LENGTH_SHORT).show();
-                }
-            } else {
-                imgDir.mkdirs();
-                Toast.makeText(ctx, "已创建目录 /sdcard/HookImages/，请放入图片", Toast.LENGTH_LONG).show();
-            }
+            int reqCode = single ? REQ_PICK_SINGLE : REQ_PICK_MULTI;
+            homeActivity.startActivityForResult(intent, reqCode);
         } catch (Throwable t) {
             Log.e(TAG, "打开图片选择失败", t);
             Toast.makeText(ctx, "打开图片选择失败", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void handleActivityResult(int requestCode, int resultCode, Intent data) {
+        if (resultCode != Activity.RESULT_OK || data == null) return;
+        final Context ctx = homeActivity != null ? homeActivity : appContext;
+        if (ctx == null) return;
+        if (requestCode == REQ_PICK_SINGLE) {
+            Uri uri = data.getData();
+            if (uri != null) {
+                String path = copyImageToModuleDir(uri);
+                if (path != null) {
+                    singleImagePath = path;
+                    savePrefs();
+                    uiHandler.post(() -> {
+                        hidePanel();
+                        uiHandler.postDelayed(() -> showPanel(ctx), 100);
+                        Toast.makeText(ctx, "单张图片已选择", Toast.LENGTH_SHORT).show();
+                    });
+                }
+            }
+        } else if (requestCode == REQ_PICK_MULTI) {
+            multiImagePaths.clear();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && data.getClipData() != null) {
+                android.content.ClipData clipData = data.getClipData();
+                for (int i = 0; i < clipData.getItemCount(); i++) {
+                    android.content.ClipData.Item item = clipData.getItemAt(i);
+                    if (item.getUri() != null) {
+                        String path = copyImageToModuleDir(item.getUri());
+                        if (path != null) multiImagePaths.add(path);
+                    }
+                }
+            } else if (data.getData() != null) {
+                String path = copyImageToModuleDir(data.getData());
+                if (path != null) multiImagePaths.add(path);
+            }
+            currentImageIndex = 0;
+            savePrefs();
+            uiHandler.post(() -> {
+                hidePanel();
+                uiHandler.postDelayed(() -> showPanel(ctx), 100);
+                Toast.makeText(ctx, "已选择 " + multiImagePaths.size() + " 张图片", Toast.LENGTH_SHORT).show();
+            });
+        }
+    }
+
+    private String getRealPathFromUri(Context ctx, Uri uri) {
+        String result = null;
+        try {
+            if ("content".equalsIgnoreCase(uri.getScheme())) {
+                Cursor cursor = ctx.getContentResolver().query(uri, new String[]{MediaStore.Images.Media.DATA}, null, null, null);
+                if (cursor != null) {
+                    if (cursor.moveToFirst()) {
+                        int idx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+                        result = cursor.getString(idx);
+                    }
+                    cursor.close();
+                }
+            } else if ("file".equalsIgnoreCase(uri.getScheme())) {
+                result = uri.getPath();
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "获取文件路径失败", t);
+        }
+        return result;
+    }
+
+    private String copyImageToModuleDir(Uri uri) {
+        if (appContext == null) return null;
+        String srcPath = getRealPathFromUri(appContext, uri);
+        if (srcPath == null || srcPath.isEmpty()) return null;
+        File srcFile = new File(srcPath);
+        if (!srcFile.exists()) return null;
+
+        File moduleDir = new File(appContext.getFilesDir(), "hook_images");
+        if (!moduleDir.exists()) moduleDir.mkdirs();
+
+        String ext = "";
+        String name = srcFile.getName();
+        int dot = name.lastIndexOf('.');
+        if (dot > 0) ext = name.substring(dot);
+        String destName = System.currentTimeMillis() + "_" + name.hashCode() + ext;
+        File destFile = new File(moduleDir, destName);
+
+        try {
+            FileInputStream fis = new FileInputStream(srcFile);
+            FileOutputStream fos = new FileOutputStream(destFile);
+            byte[] buffer = new byte[1024];
+            int len;
+            while ((len = fis.read(buffer)) != -1) {
+                fos.write(buffer, 0, len);
+            }
+            fis.close();
+            fos.close();
+            return destFile.getAbsolutePath();
+        } catch (Throwable t) {
+            Log.e(TAG, "复制图片失败", t);
+        }
+        return null;
     }
 
     // ======================== WiFi扫描 ========================
@@ -2304,6 +2148,58 @@ public class Hook implements IXposedHookLoadPackage {
                     + Character.digit(hex.charAt(i + 1), 16));
         }
         return data;
+    }
+
+    // ======================== BaseNameCard Hook ========================
+
+    private void hookBaseNameCard(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> baseNameCardClass = XposedHelpers.findClass("com.alibaba.android.rimet.biz.BaseNameCard", lpparam.classLoader);
+            for (java.lang.reflect.Constructor<?> ctor : baseNameCardClass.getDeclaredConstructors()) {
+                de.robv.android.xposed.XposedBridge.hookMethod(ctor, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        Object card = param.thisObject;
+                        View avatarView = findAvatarView(card);
+                        if (avatarView != null) {
+                            avatarView.setOnLongClickListener(v -> {
+                                if (appContext != null) {
+                                    showPanel(appContext);
+                                }
+                                return true;
+                            });
+                        }
+                    }
+                });
+            }
+            Log.e(TAG, "BaseNameCard Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "BaseNameCard Hook失败", t);
+        }
+    }
+
+    private View findAvatarView(Object obj) {
+        try {
+            Field[] fields = obj.getClass().getDeclaredFields();
+            View candidate = null;
+            for (Field f : fields) {
+                f.setAccessible(true);
+                Object val = f.get(obj);
+                if (val instanceof View) {
+                    String name = f.getName().toLowerCase();
+                    if (name.contains("avatar") || name.contains("head") || name.contains("icon")) {
+                        return (View) val;
+                    }
+                    if (val instanceof ImageView && candidate == null) {
+                        candidate = (View) val;
+                    }
+                }
+            }
+            return candidate;
+        } catch (Throwable t) {
+            Log.e(TAG, "查找头像View失败", t);
+        }
+        return null;
     }
 
     // ======================== 配置读写 ========================
