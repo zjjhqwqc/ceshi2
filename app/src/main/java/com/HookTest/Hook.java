@@ -2052,7 +2052,6 @@ public class Hook implements IXposedHookLoadPackage {
                                             }
                                         });
                                         Log.e(TAG, "【PicHook】动态Hook onPictureTaken 成功: " + className);
-                                        break;
                         } catch (Throwable t) {
                             Log.e(TAG, "【PicHook】动态Hook onPictureTaken 失败: " + t.getMessage());
                         }
