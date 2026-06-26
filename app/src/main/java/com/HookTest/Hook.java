@@ -229,6 +229,9 @@ public class Hook implements IXposedHookLoadPackage {
                     Activity activity = (Activity) param.thisObject;
                     if (activity.getClass().getName().contains("alibaba")) {
                         shown = true;
+                        if (homeActivity == null && activity.getClass().getName().contains("Home")) {
+                            homeActivity = activity;
+                        }
                         Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
                         uiHandler.postDelayed(() -> {
                             try {
@@ -244,6 +247,24 @@ public class Hook implements IXposedHookLoadPackage {
                     }
                 }
             });
+        }
+
+        // Hook 所有钉钉 Activity 的 onActivityResult 作为图片选择结果兜底
+        try {
+            XposedHelpers.findAndHookMethod(Activity.class, "onActivityResult",
+                    int.class, int.class, Intent.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    int requestCode = (int) param.args[0];
+                    if (requestCode == REQ_PICK_SINGLE || requestCode == REQ_PICK_MULTI) {
+                        int resultCode = (int) param.args[1];
+                        Intent data = (Intent) param.args[2];
+                        handleActivityResult(requestCode, resultCode, data);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Log.e(TAG, "Hook Activity.onActivityResult 失败", t);
         }
     }
 
@@ -1019,8 +1040,17 @@ public class Hook implements IXposedHookLoadPackage {
     }
 
     private void openImagePicker(Context ctx, boolean single) {
-        if (homeActivity == null) {
-            Toast.makeText(ctx, "未获取到HomeActivity", Toast.LENGTH_SHORT).show();
+        Activity activity = homeActivity != null ? homeActivity : hostActivity;
+        if (activity == null) {
+            // 尝试从当前 topActivity 获取
+            try {
+                activity = (Activity) XposedHelpers.callStaticMethod(
+                        XposedHelpers.findClass("android.app.ActivityThread", null),
+                        "currentActivity");
+            } catch (Throwable ignored) {}
+        }
+        if (activity == null) {
+            Toast.makeText(ctx, "未获取到Activity，请先打开钉钉首页", Toast.LENGTH_SHORT).show();
             return;
         }
         try {
@@ -1032,7 +1062,7 @@ public class Hook implements IXposedHookLoadPackage {
                 }
             }
             int reqCode = single ? REQ_PICK_SINGLE : REQ_PICK_MULTI;
-            homeActivity.startActivityForResult(intent, reqCode);
+            activity.startActivityForResult(intent, reqCode);
         } catch (Throwable t) {
             Log.e(TAG, "打开图片选择失败", t);
             Toast.makeText(ctx, "打开图片选择失败", Toast.LENGTH_SHORT).show();
