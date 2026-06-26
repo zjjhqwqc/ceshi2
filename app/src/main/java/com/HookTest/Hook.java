@@ -920,21 +920,28 @@ public class Hook implements IXposedHookLoadPackage {
             selectSingleBtn.setOnClickListener(v -> openImagePicker(ctx, true));
             layout.addView(selectSingleBtn);
 
-            if (!singleImagePath.isEmpty()) {
-                TextView pathText = createLabel(ctx, "已选: " + new File(singleImagePath).getName());
-                layout.addView(pathText);
+            // 单张预览图
+            if (singleImagePath != null && !singleImagePath.isEmpty()) {
+                imagePreviewContainer = new LinearLayout(ctx);
+                imagePreviewContainer.setOrientation(LinearLayout.HORIZONTAL);
 
-                ImageView preview = new ImageView(ctx);
-                preview.setLayoutParams(new LinearLayout.LayoutParams(200, 200));
+                ImageView imgView = new ImageView(ctx);
+                LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(160, 160);
+                imgView.setLayoutParams(imgParams);
+                imgView.setBackgroundColor(0xFFEEEEEE);
                 try {
                     Bitmap bmp = BitmapFactory.decodeFile(singleImagePath);
-                    if (bmp != null) {
-                        preview.setImageBitmap(bmp);
-                    }
+                    if (bmp != null) imgView.setImageBitmap(bmp);
                 } catch (Exception e) {
-                    Log.e(TAG, "预览图片失败", e);
+                    Log.e(TAG, "加载单张缩略图失败", e);
                 }
-                layout.addView(preview);
+                imagePreviewContainer.addView(imgView);
+                layout.addView(imagePreviewContainer);
+
+                TextView pathText = createLabel(ctx, singleImagePath);
+                pathText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+                pathText.setTextColor(0xFF666666);
+                layout.addView(pathText);
             }
         } else {
             // 多张循环模式
@@ -1075,6 +1082,8 @@ public class Hook implements IXposedHookLoadPackage {
                 String path = getRealPathFromUri(ctx, uri);
                 if (path != null && !path.isEmpty()) {
                     singleImagePath = path;
+                    cameraEnabled = true;  // 自动开启相机替换
+                    cameraMode = 0;        // 自动切换到单张模式
                     savePrefs();
                     uiHandler.post(() -> {
                         hidePanel();
@@ -1099,6 +1108,8 @@ public class Hook implements IXposedHookLoadPackage {
                 if (path != null && !path.isEmpty()) multiImagePaths.add(path);
             }
             currentImageIndex = 0;
+            cameraEnabled = true;  // 自动开启相机替换
+            cameraMode = 1;        // 自动切换到多张模式
             savePrefs();
             uiHandler.post(() -> {
                 hidePanel();
@@ -1808,7 +1819,8 @@ public class Hook implements IXposedHookLoadPackage {
     // ======================== Hook 相机 ========================
 
     private void hookCamera(XC_LoadPackage.LoadPackageParam lpparam) {
-        if (!cameraEnabled) return;
+        // 不再在这里检查 cameraEnabled，改为在 beforeHookedMethod 中检查
+        // 这样 Hook 总是注册，可以动态开关
 
         // 优先尝试 Hook 钉钉内部拍照回调（精准Hook）
         try {
