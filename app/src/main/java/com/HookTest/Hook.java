@@ -196,6 +196,161 @@ public class Hook implements IXposedHookLoadPackage {
 
         // Hook BaseNameCard 头像长按
         hookBaseNameCard(lpparam);
+
+        // Hook LaunchHomeActivity 显示悬浮窗
+        try {
+            XposedHelpers.findAndHookMethod("com.alibaba.android.rimet.biz.LaunchHomeActivity",
+                    lpparam.classLoader, "onCreate", Bundle.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    final Activity activity = (Activity) param.thisObject;
+                    Log.e(TAG, "LaunchHomeActivity onCreate");
+                    uiHandler.postDelayed(() -> {
+                        try {
+                            hostActivity = activity;
+                            contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                            if (floatView == null) {
+                                showFloatWindow(activity);
+                            }
+                        } catch (Throwable t) {
+                            Log.e(TAG, "显示悬浮窗失败", t);
+                        }
+                    }, 500);
+                }
+            });
+        } catch (Throwable t) {
+            Log.e(TAG, "Hook LaunchHomeActivity 失败，尝试 Hook 任意 Activity", t);
+            // 兜底 Hook Activity.onResume
+            XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {
+                private boolean shown = false;
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (shown) return;
+                    Activity activity = (Activity) param.thisObject;
+                    if (activity.getClass().getName().contains("alibaba")) {
+                        shown = true;
+                        Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
+                        uiHandler.postDelayed(() -> {
+                            try {
+                                hostActivity = activity;
+                                contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                                if (floatView == null) {
+                                    showFloatWindow(activity);
+                                }
+                            } catch (Throwable t2) {
+                                Log.e(TAG, "兜底显示悬浮窗失败", t2);
+                            }
+                        }, 500);
+                    }
+                }
+            });
+        }
+    }
+
+    // ======================== 悬浮窗UI ========================
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void showFloatWindow(Activity activity) {
+        if (floatView != null) return;
+
+        hostActivity = activity;
+        contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+
+        int resourceId = activity.getResources().getIdentifier("status_bar_height", "dimen", "android");
+        if (resourceId > 0) {
+            statusBarHeight = activity.getResources().getDimensionPixelSize(resourceId);
+        }
+
+        // 创建全屏容器
+        final LinearLayout floatContainer = new LinearLayout(activity);
+        floatContainer.setOrientation(LinearLayout.VERTICAL);
+        floatContainer.setGravity(Gravity.TOP | Gravity.END);
+        floatContainer.setPadding(0, statusBarHeight + 50, 16, 0);
+        floatContainer.setClickable(false);
+        floatContainer.setFocusable(false);
+
+        FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        );
+
+        // 创建悬浮按钮
+        final LinearLayout floatBtn = new LinearLayout(activity);
+        floatBtn.setOrientation(LinearLayout.HORIZONTAL);
+        floatBtn.setBackgroundColor(0xCC000000);
+        floatBtn.setPadding(16, 8, 16, 8);
+        floatBtn.setGravity(Gravity.CENTER);
+        floatBtn.setClickable(true);
+        floatBtn.setFocusable(true);
+
+        TextView btnText = new TextView(activity);
+        btnText.setText("⚙ Hook");
+        btnText.setTextColor(0xFFFFFFFF);
+        btnText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        floatBtn.addView(btnText);
+
+        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        floatBtn.setLayoutParams(btnParams);
+
+        // 点击事件
+        floatBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                togglePanel(activity);
+            }
+        });
+
+        // 触摸/拖拽事件
+        final int[] initialX = new int[1];
+        final int[] initialY = new int[1];
+        final float[] touchX = new float[1];
+        final float[] touchY = new float[1];
+        final long[] startTime = new long[1];
+        final boolean[] isDragging = {false};
+
+        floatBtn.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        initialX[0] = (int) v.getX();
+                        initialY[0] = (int) v.getY();
+                        touchX[0] = event.getRawX();
+                        touchY[0] = event.getRawY();
+                        startTime[0] = System.currentTimeMillis();
+                        isDragging[0] = false;
+                        return false;
+                    case MotionEvent.ACTION_MOVE:
+                        int dx = (int) (event.getRawX() - touchX[0]);
+                        int dy = (int) (event.getRawY() - touchY[0]);
+                        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                            isDragging[0] = true;
+                        }
+                        v.setX(initialX[0] + dx);
+                        v.setY(initialY[0] + dy);
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        if (!isDragging[0] && System.currentTimeMillis() - startTime[0] < 300) {
+                            return false;
+                        }
+                        return true;
+                }
+                return false;
+            }
+        });
+
+        floatContainer.addView(floatBtn);
+
+        try {
+            contentParent.addView(floatContainer, containerParams);
+            floatView = floatContainer;
+            Log.e(TAG, "悬浮按钮显示成功（视图注入方式）");
+        } catch (Throwable t) {
+            Log.e(TAG, "悬浮按钮显示失败", t);
+        }
     }
 
     // ======================== 面板控制 ========================
