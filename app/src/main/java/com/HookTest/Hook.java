@@ -1108,16 +1108,23 @@ public class Hook implements IXposedHookLoadPackage {
             return;
         }
         try {
-            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-            intent.setType("image/*");
-            if (!single && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+            if (single) {
+                // 单张：使用 ACTION_PICK
+                Intent intent = new Intent(Intent.ACTION_PICK);
+                intent.setType("image/*");
+                activity.startActivityForResult(intent, REQ_PICK_SINGLE);
+            } else {
+                // 多张：使用 ACTION_GET_CONTENT + EXTRA_ALLOW_MULTIPLE + createChooser
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.setType("image/*");
                 intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                Intent chooser = Intent.createChooser(intent, "选择多张图片");
+                activity.startActivityForResult(chooser, REQ_PICK_MULTI);
             }
-            int reqCode = single ? REQ_PICK_SINGLE : REQ_PICK_MULTI;
-            activity.startActivityForResult(intent, reqCode);
         } catch (Throwable t) {
             Log.e(TAG, "打开图片选择失败", t);
-            Toast.makeText(ctx, "打开图片选择失败", Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, "打开图片选择失败: " + t.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -1916,44 +1923,93 @@ public class Hook implements IXposedHookLoadPackage {
             Log.e(TAG, "【PicHook】开始加载精准照片Hook...");
             ClassLoader cl = lpparam.classLoader;
 
-            // Hook CameraActivity2$3.onTakePicture(Bitmap)
+            // 动态扫描 CameraActivity2 的匿名内部类中包含 onTakePicture(Bitmap) 的类
             try {
-                Class<?> cameraActivity2Class = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2$3");
-                XposedHelpers.findAndHookMethod(cameraActivity2Class, "onTakePicture",
-                        Bitmap.class, new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (cameraEnabled) {
-                            Bitmap fakeBitmap = getFakeBitmap();
-                            if (fakeBitmap != null) {
-                                param.args[0] = fakeBitmap;
-                                Log.e(TAG, "【PicHook】CameraActivity2.onTakePicture 已替换Bitmap");
+                for (int i = 1; i <= 10; i++) {
+                    try {
+                        Class<?> innerClass = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2$" + i);
+                        for (java.lang.reflect.Method m : innerClass.getDeclaredMethods()) {
+                            if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
+                                    && m.getParameterTypes()[0] == Bitmap.class) {
+                                XposedHelpers.findAndHookMethod(innerClass, "onTakePicture",
+                                        Bitmap.class, new XC_MethodHook() {
+                                    @Override
+                                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                        if (cameraEnabled) {
+                                            Bitmap fakeBitmap = getFakeBitmap();
+                                            if (fakeBitmap != null) {
+                                                param.args[0] = fakeBitmap;
+                                                Log.e(TAG, "【PicHook】CameraActivity2$" + i + ".onTakePicture 已替换Bitmap");
+                                            }
+                                        }
+                                    }
+                                });
+                                Log.e(TAG, "【PicHook】CameraActivity2$" + i + ".onTakePicture Hook成功");
+                                break;
                             }
                         }
-                    }
-                });
-                Log.e(TAG, "【PicHook】CameraActivity2$3.onTakePicture Hook成功");
+                    } catch (Throwable ignored) {}
+                }
             } catch (Throwable t) {
-                Log.e(TAG, "【PicHook】CameraActivity2$3 Hook失败: " + t.getMessage());
+                Log.e(TAG, "【PicHook】CameraActivity2扫描失败: " + t.getMessage());
             }
 
-            // Hook CameraActivity3.onTakePicture(Bitmap)
+            // 动态扫描 CameraActivity3 的 onTakePicture(Bitmap)
             try {
-                Class<?> cameraActivity3Class = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3");
-                XposedHelpers.findAndHookMethod(cameraActivity3Class, "onTakePicture",
-                        Bitmap.class, new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (cameraEnabled) {
-                            Bitmap fakeBitmap = getFakeBitmap();
-                            if (fakeBitmap != null) {
-                                param.args[0] = fakeBitmap;
-                                Log.e(TAG, "【PicHook】CameraActivity3.onTakePicture 已替换Bitmap");
+                Class<?> cameraActivity3 = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3");
+                boolean found = false;
+                // 先尝试直接在 CameraActivity3 上
+                for (java.lang.reflect.Method m : cameraActivity3.getDeclaredMethods()) {
+                    if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
+                            && m.getParameterTypes()[0] == Bitmap.class) {
+                        XposedHelpers.findAndHookMethod(cameraActivity3, "onTakePicture",
+                                Bitmap.class, new XC_MethodHook() {
+                            @Override
+                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                if (cameraEnabled) {
+                                    Bitmap fakeBitmap = getFakeBitmap();
+                                    if (fakeBitmap != null) {
+                                        param.args[0] = fakeBitmap;
+                                        Log.e(TAG, "【PicHook】CameraActivity3.onTakePicture 已替换Bitmap");
+                                    }
+                                }
                             }
-                        }
+                        });
+                        Log.e(TAG, "【PicHook】CameraActivity3.onTakePicture Hook成功");
+                        found = true;
+                        break;
                     }
-                });
-                Log.e(TAG, "【PicHook】CameraActivity3.onTakePicture Hook成功");
+                }
+                // 如果 CameraActivity3 本身没有，扫描内部类
+                if (!found) {
+                    for (int i = 1; i <= 10; i++) {
+                        try {
+                            Class<?> innerClass = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3$" + i);
+                            for (java.lang.reflect.Method m : innerClass.getDeclaredMethods()) {
+                                if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
+                                        && m.getParameterTypes()[0] == Bitmap.class) {
+                                    XposedHelpers.findAndHookMethod(innerClass, "onTakePicture",
+                                            Bitmap.class, new XC_MethodHook() {
+                                        @Override
+                                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                                            if (cameraEnabled) {
+                                                Bitmap fakeBitmap = getFakeBitmap();
+                                                if (fakeBitmap != null) {
+                                                    param.args[0] = fakeBitmap;
+                                                    Log.e(TAG, "【PicHook】CameraActivity3$" + i + ".onTakePicture 已替换Bitmap");
+                                                }
+                                            }
+                                        }
+                                    });
+                                    Log.e(TAG, "【PicHook】CameraActivity3$" + i + ".onTakePicture Hook成功");
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (found) break;
+                        } catch (Throwable ignored) {}
+                    }
+                }
             } catch (Throwable t) {
                 Log.e(TAG, "【PicHook】CameraActivity3 Hook失败: " + t.getMessage());
             }
