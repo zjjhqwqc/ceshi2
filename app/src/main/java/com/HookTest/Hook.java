@@ -981,14 +981,16 @@ public class Hook implements IXposedHookLoadPackage {
             final int index = i;
             String path = multiImagePaths.get(i);
 
-            LinearLayout itemLayout = new LinearLayout(ctx);
-            itemLayout.setOrientation(LinearLayout.VERTICAL);
-            itemLayout.setPadding(4, 4, 4, 4);
+            FrameLayout itemLayout = new FrameLayout(ctx);
+            LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(110, 130);
+            itemParams.setMargins(4, 4, 4, 4);
+            itemLayout.setLayoutParams(itemParams);
 
             ImageView imgView = new ImageView(ctx);
-            LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(120, 120);
+            FrameLayout.LayoutParams imgParams = new FrameLayout.LayoutParams(100, 100);
             imgView.setLayoutParams(imgParams);
             imgView.setBackgroundColor(0xFFEEEEEE);
+            imgView.setScaleType(ImageView.ScaleType.CENTER_CROP);
 
             try {
                 Bitmap bmp = BitmapFactory.decodeFile(path);
@@ -1001,21 +1003,73 @@ public class Hook implements IXposedHookLoadPackage {
 
             // 当前使用的高亮边框
             if (i == currentImageIndex) {
-                imgView.setPadding(4, 4, 4, 4);
+                imgView.setPadding(3, 3, 3, 3);
                 imgView.setBackgroundColor(0xFF4CAF50);
             }
 
-            // 长按拖拽排序
-            imgView.setOnLongClickListener(v -> {
-                if (index > 0) {
-                    // 简单交换：与上一个交换
-                    Collections.swap(multiImagePaths, index, index - 1);
-                    if (currentImageIndex == index) currentImageIndex = index - 1;
-                    else if (currentImageIndex == index - 1) currentImageIndex = index;
-                    refreshImagePreviews(ctx);
-                    updateImageStatus();
-                    Toast.makeText(ctx, "已调整顺序", Toast.LENGTH_SHORT).show();
+            // 序号标签
+            TextView numText = new TextView(ctx);
+            numText.setText(String.valueOf(i + 1));
+            numText.setTextColor(0xFFFFFFFF);
+            numText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            numText.setBackgroundColor(0x88000000);
+            numText.setPadding(4, 2, 4, 2);
+            FrameLayout.LayoutParams numParams = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+            numParams.gravity = Gravity.TOP | Gravity.START;
+            numText.setLayoutParams(numParams);
+
+            // 删除按钮
+            TextView delBtn = new TextView(ctx);
+            delBtn.setText("×");
+            delBtn.setTextColor(0xFFFFFFFF);
+            delBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            delBtn.setBackgroundColor(0xCCF44336);
+            delBtn.setPadding(4, 0, 4, 0);
+            delBtn.setGravity(Gravity.CENTER);
+            FrameLayout.LayoutParams delParams = new FrameLayout.LayoutParams(30, 30);
+            delParams.gravity = Gravity.TOP | Gravity.END;
+            delBtn.setLayoutParams(delParams);
+            delBtn.setOnClickListener(v -> {
+                multiImagePaths.remove(index);
+                if (currentImageIndex >= multiImagePaths.size()) {
+                    currentImageIndex = 0;
                 }
+                if (multiImagePaths.isEmpty()) {
+                    cameraEnabled = false;
+                }
+                savePrefs();
+                refreshImagePreviews(ctx);
+                updateImageStatus();
+                Toast.makeText(ctx, "已删除", Toast.LENGTH_SHORT).show();
+            });
+
+            // 长按拖动排序（改进版：支持任意位置调整）
+            imgView.setOnLongClickListener(v -> {
+                // 弹出位置调整对话框
+                final String[] items = new String[multiImagePaths.size()];
+                for (int j = 0; j < items.length; j++) {
+                    items[j] = "位置 " + (j + 1);
+                }
+                new android.app.AlertDialog.Builder(ctx)
+                    .setTitle("调整图片到位置")
+                    .setItems(items, (dialog, which) -> {
+                        if (which != index) {
+                            String pathToMove = multiImagePaths.remove(index);
+                            multiImagePaths.add(which, pathToMove);
+                            if (currentImageIndex == index) {
+                                currentImageIndex = which;
+                            } else if (currentImageIndex > index && currentImageIndex <= which) {
+                                currentImageIndex--;
+                            } else if (currentImageIndex < index && currentImageIndex >= which) {
+                                currentImageIndex++;
+                            }
+                            savePrefs();
+                            refreshImagePreviews(ctx);
+                            updateImageStatus();
+                        }
+                    })
+                    .show();
                 return true;
             });
 
@@ -1028,13 +1082,8 @@ public class Hook implements IXposedHookLoadPackage {
             });
 
             itemLayout.addView(imgView);
-
-            TextView numText = new TextView(ctx);
-            numText.setText(String.valueOf(i + 1));
-            numText.setGravity(Gravity.CENTER);
-            numText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
             itemLayout.addView(numText);
-
+            itemLayout.addView(delBtn);
             imagePreviewContainer.addView(itemLayout);
         }
     }
@@ -1116,6 +1165,22 @@ public class Hook implements IXposedHookLoadPackage {
                 uiHandler.postDelayed(() -> showPanel(ctx), 100);
                 Toast.makeText(ctx, "已选择 " + multiImagePaths.size() + " 张图片", Toast.LENGTH_SHORT).show();
             });
+        }
+        // 如果ReceiveClass未配置，尝试重新扫描
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (prefs.getString("ReceiveClass", "").isEmpty() && appContext != null) {
+            // 延迟扫描，等待ClassLoader准备就绪
+            uiHandler.postDelayed(() -> {
+                try {
+                    // 触发一次hookCamera重新扫描（通过反射获取已保存的lpparam或重新Hook）
+                    // 由于lpparam不在静态字段中，这里我们只能尝试直接加载已知类
+                    String found = autoScanReceiveClass(appContext.getClassLoader());
+                    if (found != null) {
+                        prefs.edit().putString("ReceiveClass", found).apply();
+                        Log.e(TAG, "【PicHook】延迟扫描找到水印处理类: " + found);
+                    }
+                } catch (Throwable ignored) {}
+            }, 2000);
         }
     }
 
@@ -1869,11 +1934,23 @@ public class Hook implements IXposedHookLoadPackage {
                 Log.e(TAG, "【PicHook】CameraActivity3 Hook失败: " + t.getMessage());
             }
 
-            // Hook 动态配置类（从SharedPreferences读取）
+            // Hook 水印处理类（自动扫描 + SharedPreferences配置）
             try {
+                String receiveClassName = null;
+                // 先尝试从SharedPreferences读取
                 SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                String receiveClassName = prefs.getString("ReceiveClass", "");
-                if (!receiveClassName.isEmpty()) {
+                receiveClassName = prefs.getString("ReceiveClass", "");
+                
+                // 如果未配置，尝试自动扫描
+                if (receiveClassName == null || receiveClassName.isEmpty()) {
+                    receiveClassName = autoScanReceiveClass(cl);
+                    if (receiveClassName != null && !receiveClassName.isEmpty()) {
+                        prefs.edit().putString("ReceiveClass", receiveClassName).apply();
+                        Log.e(TAG, "【PicHook】自动扫描到水印处理类: " + receiveClassName);
+                    }
+                }
+                
+                if (receiveClassName != null && !receiveClassName.isEmpty()) {
                     Class<?> receiveClass = cl.loadClass(receiveClassName);
                     XposedHelpers.findAndHookMethod(receiveClass, "a",
                             Context.class, byte[].class, new XC_MethodHook() {
@@ -1889,6 +1966,8 @@ public class Hook implements IXposedHookLoadPackage {
                         }
                     });
                     Log.e(TAG, "【PicHook】ReceiveClass: " + receiveClassName + " Hook成功");
+                } else {
+                    Log.e(TAG, "【PicHook】未找到水印处理类，尝试兜底Hook");
                 }
             } catch (Throwable t) {
                 Log.e(TAG, "【PicHook】ReceiveClass Hook失败: " + t.getMessage());
@@ -1935,6 +2014,72 @@ public class Hook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             Log.e(TAG, "MediaStore Hook失败", t);
         }
+    }
+
+    /**
+     * 自动扫描水印处理类（参考钉XJ插件）
+     */
+    private String autoScanReceiveClass(ClassLoader cl) {
+        try {
+            // 方法1：尝试常见的类名
+            String[] knownClasses = {
+                "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2$a",
+                "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3$a",
+                "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2$1",
+                "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3$1",
+            };
+            for (String className : knownClasses) {
+                try {
+                    Class<?> cls = cl.loadClass(className);
+                    for (java.lang.reflect.Method m : cls.getDeclaredMethods()) {
+                        if ("a".equals(m.getName()) && m.getParameterTypes().length == 2
+                                && m.getParameterTypes()[0] == Context.class
+                                && m.getParameterTypes()[1] == byte[].class) {
+                            Log.e(TAG, "【PicHook】找到已知水印处理类: " + className);
+                            return className;
+                        }
+                    }
+                } catch (Throwable ignored) {}
+            }
+            
+            // 方法2：遍历facebox包下的类（简化版，通过反射DexPathList）
+            try {
+                Object pathList = XposedHelpers.getObjectField(cl, "pathList");
+                Object[] dexElements = (Object[]) XposedHelpers.getObjectField(pathList, "dexElements");
+                for (Object element : dexElements) {
+                    Object dexFile = XposedHelpers.getObjectField(element, "dexFile");
+                    if (dexFile != null) {
+                        java.util.Enumeration<String> entries = 
+                            (java.util.Enumeration<String>) XposedHelpers.callMethod(dexFile, "entries");
+                        while (entries.hasMoreElements()) {
+                            String entry = entries.nextElement();
+                            if (entry.startsWith("com/alibaba/dingtalk/facebox/") 
+                                    && entry.contains("$") 
+                                    && !entry.contains("R$")
+                                    && !entry.contains("BuildConfig")) {
+                                try {
+                                    String className = entry.replace('/', '.').replace(".class", "");
+                                    Class<?> cls = cl.loadClass(className);
+                                    for (java.lang.reflect.Method m : cls.getDeclaredMethods()) {
+                                        if ("a".equals(m.getName()) && m.getParameterTypes().length == 2
+                                                && m.getParameterTypes()[0] == Context.class
+                                                && m.getParameterTypes()[1] == byte[].class) {
+                                            Log.e(TAG, "【PicHook】扫描到水印处理类: " + className);
+                                            return className;
+                                        }
+                                    }
+                                } catch (Throwable ignored) {}
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                Log.e(TAG, "【PicHook】Dex扫描失败: " + t.getMessage());
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "【PicHook】自动扫描失败", t);
+        }
+        return null;
     }
 
     /**
