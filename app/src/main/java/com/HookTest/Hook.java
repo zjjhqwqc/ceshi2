@@ -946,7 +946,7 @@ public class Hook implements IXposedHookLoadPackage {
                 imagePreviewContainer.setOrientation(LinearLayout.HORIZONTAL);
 
                 ImageView imgView = new ImageView(ctx);
-                LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(160, 160);
+                LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(dpToPx(ctx, 140), dpToPx(ctx, 140));
                 imgView.setLayoutParams(imgParams);
                 imgView.setBackgroundColor(0xFFEEEEEE);
                 imgView.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -1037,6 +1037,10 @@ public class Hook implements IXposedHookLoadPackage {
         }
     }
 
+    private int dpToPx(Context ctx, int dp) {
+        return (int) (dp * ctx.getResources().getDisplayMetrics().density + 0.5f);
+    }
+
     private void refreshImagePreviews(Context ctx) {
         if (imagePreviewContainer == null) return;
         imagePreviewContainer.removeAllViews();
@@ -1046,14 +1050,16 @@ public class Hook implements IXposedHookLoadPackage {
             String path = multiImagePaths.get(i);
 
             FrameLayout itemLayout = new FrameLayout(ctx);
-            // 放大容器：160x180（图片150x150 + 按钮空间）
-            LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(160, 180);
-            itemParams.setMargins(6, 6, 6, 6);
+            int itemW = dpToPx(ctx, 130);
+            int itemH = dpToPx(ctx, 150);
+            LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(itemW, itemH);
+            itemParams.setMargins(dpToPx(ctx, 4), dpToPx(ctx, 4), dpToPx(ctx, 4), dpToPx(ctx, 4));
             itemLayout.setLayoutParams(itemParams);
 
             ImageView imgView = new ImageView(ctx);
-            // 放大图片：150x150
-            FrameLayout.LayoutParams imgParams = new FrameLayout.LayoutParams(150, 150);
+            int imgSize = dpToPx(ctx, 120);
+            FrameLayout.LayoutParams imgParams = new FrameLayout.LayoutParams(imgSize, imgSize);
+            imgParams.gravity = Gravity.CENTER;
             imgView.setLayoutParams(imgParams);
             imgView.setBackgroundColor(0xFFEEEEEE);
             imgView.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -1069,56 +1075,37 @@ public class Hook implements IXposedHookLoadPackage {
 
             // 当前使用的高亮边框
             if (i == currentImageIndex) {
-                imgView.setPadding(4, 4, 4, 4);
+                imgView.setPadding(dpToPx(ctx, 3), dpToPx(ctx, 3), dpToPx(ctx, 3), dpToPx(ctx, 3));
                 imgView.setBackgroundColor(0xFF4CAF50);
             }
+
+            int btnSize = dpToPx(ctx, 28);
+            int btnPad = dpToPx(ctx, 2);
 
             // 序号标签（左上角）
             TextView numText = new TextView(ctx);
             numText.setText(String.valueOf(i + 1));
             numText.setTextColor(0xFFFFFFFF);
-            numText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-            numText.setBackgroundColor(0xAA000000);
-            numText.setPadding(6, 3, 6, 3);
+            numText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            numText.setBackgroundColor(0xCC000000);
+            numText.setPadding(btnPad, btnPad, btnPad, btnPad);
             FrameLayout.LayoutParams numParams = new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
             numParams.gravity = Gravity.TOP | Gravity.START;
-            numParams.setMargins(4, 4, 0, 0);
+            numParams.setMargins(dpToPx(ctx, 2), dpToPx(ctx, 2), 0, 0);
             numText.setLayoutParams(numParams);
-
-            // 旋转按钮（右下角）
-            TextView rotateBtn = new TextView(ctx);
-            rotateBtn.setText("↻");
-            rotateBtn.setTextColor(0xFFFFFFFF);
-            rotateBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-            rotateBtn.setBackgroundColor(0xDD2196F3);
-            rotateBtn.setPadding(6, 2, 6, 2);
-            rotateBtn.setGravity(Gravity.CENTER);
-            FrameLayout.LayoutParams rotParams = new FrameLayout.LayoutParams(36, 36);
-            rotParams.gravity = Gravity.BOTTOM | Gravity.END;
-            rotParams.setMargins(0, 0, 4, 4);
-            rotateBtn.setLayoutParams(rotParams);
-            final int imgIndex = i;
-            rotateBtn.setOnClickListener(v -> {
-                int currentRot = imageRotations.get(imgIndex);
-                int newRot = (currentRot + 90) % 360;
-                imageRotations.set(imgIndex, newRot);
-                savePrefs();
-                refreshImagePreviews(ctx);
-                Toast.makeText(ctx, "图片 " + (imgIndex + 1) + " 旋转 " + newRot + "°", Toast.LENGTH_SHORT).show();
-            });
 
             // 删除按钮（右上角）
             TextView delBtn = new TextView(ctx);
             delBtn.setText("×");
             delBtn.setTextColor(0xFFFFFFFF);
-            delBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            delBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             delBtn.setBackgroundColor(0xDDF44336);
-            delBtn.setPadding(6, 0, 6, 0);
+            delBtn.setPadding(btnPad, 0, btnPad, 0);
             delBtn.setGravity(Gravity.CENTER);
-            FrameLayout.LayoutParams delParams = new FrameLayout.LayoutParams(36, 36);
+            FrameLayout.LayoutParams delParams = new FrameLayout.LayoutParams(btnSize, btnSize);
             delParams.gravity = Gravity.TOP | Gravity.END;
-            delParams.setMargins(0, 4, 4, 0);
+            delParams.setMargins(0, dpToPx(ctx, 2), dpToPx(ctx, 2), 0);
             delBtn.setLayoutParams(delParams);
             delBtn.setOnClickListener(v -> {
                 multiImagePaths.remove(index);
@@ -1133,6 +1120,28 @@ public class Hook implements IXposedHookLoadPackage {
                 refreshImagePreviews(ctx);
                 updateImageStatus();
                 Toast.makeText(ctx, "已删除", Toast.LENGTH_SHORT).show();
+            });
+
+            // 旋转按钮（右下角）
+            TextView rotateBtn = new TextView(ctx);
+            rotateBtn.setText("↻");
+            rotateBtn.setTextColor(0xFFFFFFFF);
+            rotateBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            rotateBtn.setBackgroundColor(0xDD2196F3);
+            rotateBtn.setPadding(btnPad, 0, btnPad, 0);
+            rotateBtn.setGravity(Gravity.CENTER);
+            FrameLayout.LayoutParams rotParams = new FrameLayout.LayoutParams(btnSize, btnSize);
+            rotParams.gravity = Gravity.BOTTOM | Gravity.END;
+            rotParams.setMargins(0, 0, dpToPx(ctx, 2), dpToPx(ctx, 2));
+            rotateBtn.setLayoutParams(rotParams);
+            final int imgIndex = i;
+            rotateBtn.setOnClickListener(v -> {
+                int currentRot = imageRotations.get(imgIndex);
+                int newRot = (currentRot + 90) % 360;
+                imageRotations.set(imgIndex, newRot);
+                savePrefs();
+                refreshImagePreviews(ctx);
+                Toast.makeText(ctx, "图片 " + (imgIndex + 1) + " 旋转 " + newRot + "°", Toast.LENGTH_SHORT).show();
             });
 
             // 长按拖动排序
@@ -2478,26 +2487,31 @@ public class Hook implements IXposedHookLoadPackage {
             }
             
             // 方盒插件 n.a.c 的精确做法：
-            // 1. 读取EXIF旋转角度
-            // 2. 物理旋转Bitmap像素
-            // 3. 压缩为byte[]（EXIF丢失但像素方向已正确）
-            int rotation = getExifRotation(path);
-            
-            // 叠加用户手动旋转（多张模式）
-            int pathIndex = multiImagePaths.indexOf(path);
-            if (pathIndex >= 0 && pathIndex < imageRotations.size()) {
-                rotation = (rotation + imageRotations.get(pathIndex)) % 360;
+            // EXIF无旋转(Orientation=1)的图片 → 强制旋转270度
+            // EXIF有旋转(Orientation=3/6/8)的图片 → 保持原样不旋转
+            // 这是针对钉钉Camera API的特定方向补偿
+            int exifRotation = getExifRotation(path);
+            if (exifRotation == 0) {
+                Matrix matrix = new Matrix();
+                matrix.postRotate(270);
+                bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                Log.e(TAG, "【PicHook】readImageFileWithExif: EXIF正常，强制旋转270°(方盒做法)");
             }
             
-            if (rotation != 0) {
-                Matrix matrix = new Matrix();
-                matrix.postRotate(rotation);
-                bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-                Log.e(TAG, "【PicHook】readImageFileWithExif: 旋转 " + rotation + "°");
+            // 叠加用户手动旋转
+            int pathIndex = multiImagePaths.indexOf(path);
+            if (pathIndex >= 0 && pathIndex < imageRotations.size()) {
+                int manualRot = imageRotations.get(pathIndex);
+                if (manualRot != 0) {
+                    Matrix matrix = new Matrix();
+                    matrix.postRotate(manualRot);
+                    bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                    Log.e(TAG, "【PicHook】readImageFileWithExif: 叠加手动旋转 " + manualRot + "°");
+                }
             }
             
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, bos);
             return bos.toByteArray();
         } catch (Throwable t) {
             Log.e(TAG, "【PicHook】readImageFileWithExif 失败", t);
