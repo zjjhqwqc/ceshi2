@@ -31,6 +31,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.media.ExifInterface;
 import android.text.InputFilter;
@@ -1272,13 +1273,28 @@ public class Hook implements IXposedHookLoadPackage {
      * 从 Uri 复制图片到模块目录，返回本地文件路径
      * 兼容 Android 10+（不依赖 MediaStore.Images.Media.DATA）
      */
+    /**
+     * 从Uri获取图片路径（优先获取原始文件路径以保留EXIF，失败则复制+恢复EXIF）
+     */
     private String copyImageFromUri(Context ctx, Uri uri) {
-        if (appContext == null || uri == null) return null;
+        if (uri == null) return null;
+        
+        // 方法1：尝试从MediaStore获取原始文件路径（保留完整EXIF，方盒插件的做法）
+        String originalPath = getRealPathFromMediaStore(ctx, uri);
+        if (originalPath != null && !originalPath.isEmpty()) {
+            File originalFile = new File(originalPath);
+            if (originalFile.exists() && originalFile.canRead()) {
+                Log.e(TAG, "【PicHook】获取原始路径: " + originalPath);
+                return originalPath;
+            }
+        }
+        
+        // 方法2：复制文件 + 从URI恢复EXIF
+        if (appContext == null) return null;
         try {
             File moduleDir = new File(appContext.getFilesDir(), "hook_images");
             if (!moduleDir.exists()) moduleDir.mkdirs();
 
-            // 生成文件名
             String ext = ".jpg";
             String lastPathSegment = uri.getLastPathSegment();
             if (lastPathSegment != null) {
@@ -1303,11 +1319,108 @@ public class Hook implements IXposedHookLoadPackage {
             is.close();
             fos.close();
             
-            Log.e(TAG, "图片已复制到: " + destFile.getAbsolutePath());
+            // 尝试从URI恢复EXIF信息到复制后的文件
+            try {
+                ExifInterface uriExif = new ExifInterface(ctx.getContentResolver().openInputStream(uri));
+                ExifInterface destExif = new ExifInterface(destFile.getAbsolutePath());
+                // 复制方向信息
+                String orientation = uriExif.getAttribute(ExifInterface.TAG_ORIENTATION);
+                if (orientation != null) {
+                    destExif.setAttribute(ExifInterface.TAG_ORIENTATION, orientation);
+                }
+                destExif.saveAttributes();
+                Log.e(TAG, "【PicHook】EXIF已恢复到复制文件, orientation=" + orientation);
+            } catch (Throwable exifErr) {
+                Log.e(TAG, "【PicHook】恢复EXIF失败: " + exifErr.getMessage());
+            }
+            
+            Log.e(TAG, "【PicHook】图片已复制到: " + destFile.getAbsolutePath());
             return destFile.getAbsolutePath();
         } catch (Throwable t) {
             Log.e(TAG, "复制图片失败", t);
         }
+        return null;
+    }
+
+    /**
+     * 从MediaStore获取原始文件路径（方盒插件做法）
+     * 尝试多种查询方式兼容不同Android版本
+     */
+    private String getRealPathFromMediaStore(Context ctx, Uri uri) {
+        // 方法1：直接获取文件路径
+        if ("file".equals(uri.getScheme())) {
+            return uri.getPath();
+        }
+        
+        try {
+            String[] projection = {MediaStore.Images.Media.DATA};
+            Cursor cursor = ctx.getContentResolver().query(uri, projection, null, null, null);
+            if (cursor != null) {
+                try {
+                    int dataIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+                    if (cursor.moveToFirst() && dataIndex >= 0) {
+                        String path = cursor.getString(dataIndex);
+                        if (path != null && !path.isEmpty()) {
+                            return path;
+                        }
+                    }
+                } finally {
+                    cursor.close();
+                }
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "MediaStore查询DATA失败: " + t.getMessage());
+        }
+        
+        // 方法2：通过 Downloads Provider 查询
+        try {
+            if (uri.getAuthority() != null && uri.getAuthority().startsWith("com.android.providers")) {
+                String[] projection = {"_data"};
+                Cursor cursor = ctx.getContentResolver().query(uri, projection, null, null, null);
+                if (cursor != null) {
+                    try {
+                        int dataIndex = cursor.getColumnIndexOrThrow("_data");
+                        if (cursor.moveToFirst() && dataIndex >= 0) {
+                            String path = cursor.getString(dataIndex);
+                            if (path != null && !path.isEmpty()) {
+                                return path;
+                            }
+                        }
+                    } finally {
+                        cursor.close();
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        
+        // 方法3：通过 MediaStore.Images.Media.EXTERNAL_CONTENT_URI 匹配
+        try {
+            String documentId = DocumentsContract.getDocumentId(uri);
+            if (documentId != null) {
+                String[] split = documentId.split(":");
+                if (split.length == 2) {
+                    String selection = MediaStore.Images.Media._ID + "=?";
+                    String[] selectionArgs = {split[1]};
+                    String[] projection = {MediaStore.Images.Media.DATA};
+                    Cursor cursor = ctx.getApplicationContext().getContentResolver().query(
+                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, selectionArgs, null);
+                    if (cursor != null) {
+                        try {
+                            int dataIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
+                            if (cursor.moveToFirst() && dataIndex >= 0) {
+                                String path = cursor.getString(dataIndex);
+                                if (path != null && !path.isEmpty()) {
+                                    return path;
+                                }
+                            }
+                        } finally {
+                            cursor.close();
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        
         return null;
     }
 
