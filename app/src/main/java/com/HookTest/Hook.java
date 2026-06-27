@@ -1046,12 +1046,14 @@ public class Hook implements IXposedHookLoadPackage {
             String path = multiImagePaths.get(i);
 
             FrameLayout itemLayout = new FrameLayout(ctx);
-            LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(110, 130);
-            itemParams.setMargins(4, 4, 4, 4);
+            // 放大容器：160x180（图片150x150 + 按钮空间）
+            LinearLayout.LayoutParams itemParams = new LinearLayout.LayoutParams(160, 180);
+            itemParams.setMargins(6, 6, 6, 6);
             itemLayout.setLayoutParams(itemParams);
 
             ImageView imgView = new ImageView(ctx);
-            FrameLayout.LayoutParams imgParams = new FrameLayout.LayoutParams(100, 100);
+            // 放大图片：150x150
+            FrameLayout.LayoutParams imgParams = new FrameLayout.LayoutParams(150, 150);
             imgView.setLayoutParams(imgParams);
             imgView.setBackgroundColor(0xFFEEEEEE);
             imgView.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -1067,33 +1069,34 @@ public class Hook implements IXposedHookLoadPackage {
 
             // 当前使用的高亮边框
             if (i == currentImageIndex) {
-                imgView.setPadding(3, 3, 3, 3);
+                imgView.setPadding(4, 4, 4, 4);
                 imgView.setBackgroundColor(0xFF4CAF50);
             }
 
-            // 序号标签
+            // 序号标签（左上角）
             TextView numText = new TextView(ctx);
             numText.setText(String.valueOf(i + 1));
             numText.setTextColor(0xFFFFFFFF);
-            numText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-            numText.setBackgroundColor(0x88000000);
-            numText.setPadding(4, 2, 4, 2);
+            numText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+            numText.setBackgroundColor(0xAA000000);
+            numText.setPadding(6, 3, 6, 3);
             FrameLayout.LayoutParams numParams = new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
             numParams.gravity = Gravity.TOP | Gravity.START;
+            numParams.setMargins(4, 4, 0, 0);
             numText.setLayoutParams(numParams);
 
-            // 旋转按钮
+            // 旋转按钮（右下角）
             TextView rotateBtn = new TextView(ctx);
             rotateBtn.setText("↻");
             rotateBtn.setTextColor(0xFFFFFFFF);
-            rotateBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            rotateBtn.setBackgroundColor(0xCC2196F3);
-            rotateBtn.setPadding(4, 0, 4, 0);
+            rotateBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            rotateBtn.setBackgroundColor(0xDD2196F3);
+            rotateBtn.setPadding(6, 2, 6, 2);
             rotateBtn.setGravity(Gravity.CENTER);
-            FrameLayout.LayoutParams rotParams = new FrameLayout.LayoutParams(30, 30);
+            FrameLayout.LayoutParams rotParams = new FrameLayout.LayoutParams(36, 36);
             rotParams.gravity = Gravity.BOTTOM | Gravity.END;
-            rotParams.bottomMargin = 30;
+            rotParams.setMargins(0, 0, 4, 4);
             rotateBtn.setLayoutParams(rotParams);
             final int imgIndex = i;
             rotateBtn.setOnClickListener(v -> {
@@ -1105,20 +1108,21 @@ public class Hook implements IXposedHookLoadPackage {
                 Toast.makeText(ctx, "图片 " + (imgIndex + 1) + " 旋转 " + newRot + "°", Toast.LENGTH_SHORT).show();
             });
 
-            // 删除按钮
+            // 删除按钮（右上角）
             TextView delBtn = new TextView(ctx);
             delBtn.setText("×");
             delBtn.setTextColor(0xFFFFFFFF);
-            delBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            delBtn.setBackgroundColor(0xCCF44336);
-            delBtn.setPadding(4, 0, 4, 0);
+            delBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            delBtn.setBackgroundColor(0xDDF44336);
+            delBtn.setPadding(6, 0, 6, 0);
             delBtn.setGravity(Gravity.CENTER);
-            FrameLayout.LayoutParams delParams = new FrameLayout.LayoutParams(30, 30);
+            FrameLayout.LayoutParams delParams = new FrameLayout.LayoutParams(36, 36);
             delParams.gravity = Gravity.TOP | Gravity.END;
+            delParams.setMargins(0, 4, 4, 0);
             delBtn.setLayoutParams(delParams);
             delBtn.setOnClickListener(v -> {
                 multiImagePaths.remove(index);
-                imageRotations.remove(index);  // 同步删除旋转角度
+                imageRotations.remove(index);
                 if (currentImageIndex >= multiImagePaths.size()) {
                     currentImageIndex = 0;
                 }
@@ -1131,9 +1135,8 @@ public class Hook implements IXposedHookLoadPackage {
                 Toast.makeText(ctx, "已删除", Toast.LENGTH_SHORT).show();
             });
 
-            // 长按拖动排序（改进版：支持任意位置调整）
+            // 长按拖动排序
             imgView.setOnLongClickListener(v -> {
-                // 弹出位置调整对话框
                 final String[] items = new String[multiImagePaths.size()];
                 for (int j = 0; j < items.length; j++) {
                     items[j] = "位置 " + (j + 1);
@@ -1144,7 +1147,7 @@ public class Hook implements IXposedHookLoadPackage {
                         if (which != index) {
                             String pathToMove = multiImagePaths.remove(index);
                             multiImagePaths.add(which, pathToMove);
-                            int rotToMove = imageRotations.remove(index);  // 同步调整旋转角度
+                            int rotToMove = imageRotations.remove(index);
                             imageRotations.add(which, rotToMove);
                             if (currentImageIndex == index) {
                                 currentImageIndex = which;
@@ -1173,7 +1176,7 @@ public class Hook implements IXposedHookLoadPackage {
             itemLayout.addView(imgView);
             itemLayout.addView(numText);
             itemLayout.addView(delBtn);
-            itemLayout.addView(rotateBtn);  // 添加旋转按钮
+            itemLayout.addView(rotateBtn);
             imagePreviewContainer.addView(itemLayout);
         }
     }
@@ -2468,30 +2471,47 @@ public class Hook implements IXposedHookLoadPackage {
      */
     private byte[] readImageFileWithExif(String path) {
         try {
-            Bitmap bitmap = BitmapFactory.decodeFile(path);
-            if (bitmap == null) {
-                Log.e(TAG, "【PicHook】readImageFileWithExif: decodeFile返回null");
-                return null;
+            // 获取用户手动设置的旋转角度
+            int manualRotation = 0;
+            int pathIndex = multiImagePaths.indexOf(path);
+            if (pathIndex >= 0 && pathIndex < imageRotations.size()) {
+                manualRotation = imageRotations.get(pathIndex);
             }
             
-            // 方盒插件 n.a.c 的精确做法：
-            // 1. 读取EXIF旋转角度
-            // 2. 物理旋转Bitmap像素
-            // 3. 压缩为byte[]（EXIF丢失但像素方向已正确）
-            int rotation = getExifRotation(path);
-            if (cameraMode == 0) {
-                rotation = (rotation + singleImageRotation) % 360;
-            }
-            if (rotation != 0) {
+            if (manualRotation == 0) {
+                // 无手动旋转：直接读取原始文件byte[]，保留完整EXIF
+                // 钉钉会自行读取EXIF并处理方向
+                File file = new File(path);
+                if (!file.exists()) {
+                    Log.e(TAG, "【PicHook】readImageFileWithExif: 文件不存在 " + path);
+                    return null;
+                }
+                java.io.FileInputStream fis = new java.io.FileInputStream(file);
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int len;
+                while ((len = fis.read(buffer)) != -1) {
+                    bos.write(buffer, 0, len);
+                }
+                fis.close();
+                byte[] data = bos.toByteArray();
+                Log.e(TAG, "【PicHook】readImageFileWithExif: 直接读取原始文件 " + path + " (" + data.length + " bytes)");
+                return data;
+            } else {
+                // 有手动旋转：物理旋转像素后压缩
+                Bitmap bitmap = BitmapFactory.decodeFile(path);
+                if (bitmap == null) {
+                    Log.e(TAG, "【PicHook】readImageFileWithExif: decodeFile返回null");
+                    return null;
+                }
                 Matrix matrix = new Matrix();
-                matrix.postRotate(rotation);
+                matrix.postRotate(manualRotation);
                 bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-                Log.e(TAG, "【PicHook】readImageFileWithExif: EXIF旋转 " + rotation + "°");
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
+                Log.e(TAG, "【PicHook】readImageFileWithExif: 手动旋转 " + manualRotation + "°");
+                return bos.toByteArray();
             }
-            
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
-            return bos.toByteArray();
         } catch (Throwable t) {
             Log.e(TAG, "【PicHook】readImageFileWithExif 失败", t);
         }
