@@ -2337,28 +2337,26 @@ public class Hook implements IXposedHookLoadPackage {
      */
     private byte[] readImageFileWithExif(String path) {
         try {
-            Bitmap bitmap = BitmapFactory.decodeFile(path);
-            if (bitmap == null) {
-                Log.e(TAG, "【PicHook】readImageFileWithExif: decodeFile返回null");
+            File file = new File(path);
+            if (!file.exists()) {
+                Log.e(TAG, "【PicHook】readImageFileWithExif: 文件不存在 " + path);
                 return null;
             }
             
-            // 只应用用户手动设置的旋转角度，不自动读取EXIF
-            int rotation = 0;
-            int pathIndex = multiImagePaths.indexOf(path);
-            if (pathIndex >= 0 && pathIndex < imageRotations.size()) {
-                rotation = imageRotations.get(pathIndex);
-            }
-            
-            if (rotation != 0) {
-                Matrix matrix = new Matrix();
-                matrix.postRotate(rotation);
-                bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-            }
-            
+            // 直接读取原始文件为byte[]，保留完整EXIF信息
+            // 不通过BitmapFactory解码再压缩，避免EXIF丢失
+            java.io.FileInputStream fis = new java.io.FileInputStream(file);
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
-            return bos.toByteArray();
+            byte[] buffer = new byte[4096];
+            int len;
+            while ((len = fis.read(buffer)) != -1) {
+                bos.write(buffer, 0, len);
+            }
+            fis.close();
+            
+            byte[] data = bos.toByteArray();
+            Log.e(TAG, "【PicHook】readImageFileWithExif: 直接读取原始文件 " + path + " (" + data.length + " bytes)");
+            return data;
         } catch (Throwable t) {
             Log.e(TAG, "【PicHook】readImageFileWithExif 失败", t);
         }
