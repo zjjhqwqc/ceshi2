@@ -2471,47 +2471,34 @@ public class Hook implements IXposedHookLoadPackage {
      */
     private byte[] readImageFileWithExif(String path) {
         try {
-            // 获取用户手动设置的旋转角度
-            int manualRotation = 0;
-            int pathIndex = multiImagePaths.indexOf(path);
-            if (pathIndex >= 0 && pathIndex < imageRotations.size()) {
-                manualRotation = imageRotations.get(pathIndex);
+            Bitmap bitmap = BitmapFactory.decodeFile(path);
+            if (bitmap == null) {
+                Log.e(TAG, "【PicHook】readImageFileWithExif: decodeFile返回null");
+                return null;
             }
             
-            if (manualRotation == 0) {
-                // 无手动旋转：直接读取原始文件byte[]，保留完整EXIF
-                // 钉钉会自行读取EXIF并处理方向
-                File file = new File(path);
-                if (!file.exists()) {
-                    Log.e(TAG, "【PicHook】readImageFileWithExif: 文件不存在 " + path);
-                    return null;
-                }
-                java.io.FileInputStream fis = new java.io.FileInputStream(file);
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                byte[] buffer = new byte[4096];
-                int len;
-                while ((len = fis.read(buffer)) != -1) {
-                    bos.write(buffer, 0, len);
-                }
-                fis.close();
-                byte[] data = bos.toByteArray();
-                Log.e(TAG, "【PicHook】readImageFileWithExif: 直接读取原始文件 " + path + " (" + data.length + " bytes)");
-                return data;
-            } else {
-                // 有手动旋转：物理旋转像素后压缩
-                Bitmap bitmap = BitmapFactory.decodeFile(path);
-                if (bitmap == null) {
-                    Log.e(TAG, "【PicHook】readImageFileWithExif: decodeFile返回null");
-                    return null;
-                }
-                Matrix matrix = new Matrix();
-                matrix.postRotate(manualRotation);
-                bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
-                Log.e(TAG, "【PicHook】readImageFileWithExif: 手动旋转 " + manualRotation + "°");
-                return bos.toByteArray();
+            // 方盒插件 n.a.c 的精确做法：
+            // 1. 读取EXIF旋转角度
+            // 2. 物理旋转Bitmap像素
+            // 3. 压缩为byte[]（EXIF丢失但像素方向已正确）
+            int rotation = getExifRotation(path);
+            
+            // 叠加用户手动旋转（多张模式）
+            int pathIndex = multiImagePaths.indexOf(path);
+            if (pathIndex >= 0 && pathIndex < imageRotations.size()) {
+                rotation = (rotation + imageRotations.get(pathIndex)) % 360;
             }
+            
+            if (rotation != 0) {
+                Matrix matrix = new Matrix();
+                matrix.postRotate(rotation);
+                bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                Log.e(TAG, "【PicHook】readImageFileWithExif: 旋转 " + rotation + "°");
+            }
+            
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
+            return bos.toByteArray();
         } catch (Throwable t) {
             Log.e(TAG, "【PicHook】readImageFileWithExif 失败", t);
         }
