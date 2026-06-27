@@ -966,9 +966,17 @@ public class Hook implements IXposedHookLoadPackage {
             layout.addView(createLabel(ctx, "多张图片循环替换:"));
 
             Button selectMultiBtn = new Button(ctx);
-            selectMultiBtn.setText("🖼 选择多张图片");
+            selectMultiBtn.setText("🖼 添加图片（逐张选择）");
             selectMultiBtn.setOnClickListener(v -> openImagePicker(ctx, false));
             layout.addView(selectMultiBtn);
+
+            // 继续添加按钮
+            if (!multiImagePaths.isEmpty()) {
+                Button addMoreBtn = new Button(ctx);
+                addMoreBtn.setText("➕ 继续添加更多图片");
+                addMoreBtn.setOnClickListener(v -> openImagePicker(ctx, false));
+                layout.addView(addMoreBtn);
+            }
 
             if (!multiImagePaths.isEmpty()) {
                 TextView countText = createLabel(ctx, "已选 " + multiImagePaths.size() + " 张图片");
@@ -983,10 +991,25 @@ public class Hook implements IXposedHookLoadPackage {
                 layout.addView(imageStatusText);
 
                 // 拖拽提示
-                TextView dragHint = createLabel(ctx, "提示: 长按图片可拖拽调整顺序");
+                TextView dragHint = createLabel(ctx, "提示: 长按图片可调整顺序，点击↻可旋转90°");
                 dragHint.setTextColor(0xFF666666);
                 dragHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
                 layout.addView(dragHint);
+                
+                // 清空所有图片按钮
+                Button clearAllBtn = new Button(ctx);
+                clearAllBtn.setText("🗑 清空所有图片");
+                clearAllBtn.setOnClickListener(v -> {
+                    multiImagePaths.clear();
+                    imageRotations.clear();
+                    currentImageIndex = 0;
+                    cameraEnabled = false;
+                    savePrefs();
+                    hidePanel();
+                    uiHandler.postDelayed(() -> showPanel(ctx), 100);
+                    Toast.makeText(ctx, "已清空所有图片", Toast.LENGTH_SHORT).show();
+                });
+                layout.addView(clearAllBtn);
             }
         }
     }
@@ -1152,21 +1175,11 @@ public class Hook implements IXposedHookLoadPackage {
             return;
         }
         try {
-            if (single) {
-                // 单张：使用 ACTION_PICK
-                Intent intent = new Intent(Intent.ACTION_PICK);
-                intent.setType("image/*");
-                activity.startActivityForResult(intent, REQ_PICK_SINGLE);
-            } else {
-                // 多张：使用 ACTION_OPEN_DOCUMENT 兼容性更好
-                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                intent.setType("image/*");
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                }
-                activity.startActivityForResult(intent, REQ_PICK_MULTI);
-            }
+            // 统一使用 ACTION_PICK，逐张选择
+            Intent intent = new Intent(Intent.ACTION_PICK);
+            intent.setType("image/*");
+            int reqCode = single ? REQ_PICK_SINGLE : REQ_PICK_MULTI;
+            activity.startActivityForResult(intent, reqCode);
         } catch (Throwable t) {
             Log.e(TAG, "打开图片选择失败", t);
             Toast.makeText(ctx, "打开图片选择失败: " + t.getMessage(), Toast.LENGTH_SHORT).show();
@@ -1196,36 +1209,24 @@ public class Hook implements IXposedHookLoadPackage {
                 }
             }
         } else if (requestCode == REQ_PICK_MULTI) {
-            multiImagePaths.clear();
-            imageRotations.clear();  // 清空旋转角度
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && data.getClipData() != null) {
-                android.content.ClipData clipData = data.getClipData();
-                for (int i = 0; i < clipData.getItemCount(); i++) {
-                    android.content.ClipData.Item item = clipData.getItemAt(i);
-                    if (item.getUri() != null) {
-                        String path = copyImageFromUri(ctx, item.getUri());
-                        if (path != null && !path.isEmpty()) {
-                            multiImagePaths.add(path);
-                            imageRotations.add(0);  // 默认旋转0度
-                        }
-                    }
-                }
-            } else if (data.getData() != null) {
+            // 追加模式：不清空已有图片，新选择的图片追加到列表末尾
+            if (data.getData() != null) {
                 String path = copyImageFromUri(ctx, data.getData());
                 if (path != null && !path.isEmpty()) {
                     multiImagePaths.add(path);
                     imageRotations.add(0);
+                    cameraEnabled = true;
+                    cameraMode = 1;
+                    savePrefs();
+                    uiHandler.post(() -> {
+                        hidePanel();
+                        uiHandler.postDelayed(() -> showPanel(ctx), 100);
+                        Toast.makeText(ctx, "已添加第 " + multiImagePaths.size() + " 张图片", Toast.LENGTH_SHORT).show();
+                    });
+                } else {
+                    Toast.makeText(ctx, "获取图片失败", Toast.LENGTH_SHORT).show();
                 }
             }
-            currentImageIndex = 0;
-            cameraEnabled = true;
-            cameraMode = 1;
-            savePrefs();
-            uiHandler.post(() -> {
-                hidePanel();
-                uiHandler.postDelayed(() -> showPanel(ctx), 100);
-                Toast.makeText(ctx, "已选择 " + multiImagePaths.size() + " 张图片", Toast.LENGTH_SHORT).show();
-            });
         }
         // 如果ReceiveClass未配置，尝试重新扫描
         SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -2342,16 +2343,11 @@ public class Hook implements IXposedHookLoadPackage {
                 return null;
             }
             
-            // 应用自定义旋转角度
+            // 只应用用户手动设置的旋转角度，不自动读取EXIF
             int rotation = 0;
             int pathIndex = multiImagePaths.indexOf(path);
             if (pathIndex >= 0 && pathIndex < imageRotations.size()) {
                 rotation = imageRotations.get(pathIndex);
-            }
-            
-            // 如果自定义旋转为0，尝试读取EXIF旋转
-            if (rotation == 0) {
-                rotation = getExifRotation(path);
             }
             
             if (rotation != 0) {
