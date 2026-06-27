@@ -95,6 +95,7 @@ public class Hook implements IXposedHookLoadPackage {
     // 相机替换相关
     private static String singleImagePath = "";
     private static List<String> multiImagePaths = new ArrayList<>();
+    private static List<Integer> imageRotations = new ArrayList<>(); // 每张图片的旋转角度
     private static int currentImageIndex = 0;
     private static Activity homeActivity;
     private static final int REQ_PICK_SINGLE = 299;
@@ -1036,6 +1037,28 @@ public class Hook implements IXposedHookLoadPackage {
             numParams.gravity = Gravity.TOP | Gravity.START;
             numText.setLayoutParams(numParams);
 
+            // 旋转按钮
+            TextView rotateBtn = new TextView(ctx);
+            rotateBtn.setText("↻");
+            rotateBtn.setTextColor(0xFFFFFFFF);
+            rotateBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            rotateBtn.setBackgroundColor(0xCC2196F3);
+            rotateBtn.setPadding(4, 0, 4, 0);
+            rotateBtn.setGravity(Gravity.CENTER);
+            FrameLayout.LayoutParams rotParams = new FrameLayout.LayoutParams(30, 30);
+            rotParams.gravity = Gravity.BOTTOM | Gravity.END;
+            rotParams.bottomMargin = 30;
+            rotateBtn.setLayoutParams(rotParams);
+            final int imgIndex = i;
+            rotateBtn.setOnClickListener(v -> {
+                int currentRot = imageRotations.get(imgIndex);
+                int newRot = (currentRot + 90) % 360;
+                imageRotations.set(imgIndex, newRot);
+                savePrefs();
+                refreshImagePreviews(ctx);
+                Toast.makeText(ctx, "图片 " + (imgIndex + 1) + " 旋转 " + newRot + "°", Toast.LENGTH_SHORT).show();
+            });
+
             // 删除按钮
             TextView delBtn = new TextView(ctx);
             delBtn.setText("×");
@@ -1049,6 +1072,7 @@ public class Hook implements IXposedHookLoadPackage {
             delBtn.setLayoutParams(delParams);
             delBtn.setOnClickListener(v -> {
                 multiImagePaths.remove(index);
+                imageRotations.remove(index);  // 同步删除旋转角度
                 if (currentImageIndex >= multiImagePaths.size()) {
                     currentImageIndex = 0;
                 }
@@ -1074,6 +1098,8 @@ public class Hook implements IXposedHookLoadPackage {
                         if (which != index) {
                             String pathToMove = multiImagePaths.remove(index);
                             multiImagePaths.add(which, pathToMove);
+                            int rotToMove = imageRotations.remove(index);  // 同步调整旋转角度
+                            imageRotations.add(which, rotToMove);
                             if (currentImageIndex == index) {
                                 currentImageIndex = which;
                             } else if (currentImageIndex > index && currentImageIndex <= which) {
@@ -1101,6 +1127,7 @@ public class Hook implements IXposedHookLoadPackage {
             itemLayout.addView(imgView);
             itemLayout.addView(numText);
             itemLayout.addView(delBtn);
+            itemLayout.addView(rotateBtn);  // 添加旋转按钮
             imagePreviewContainer.addView(itemLayout);
         }
     }
@@ -1131,13 +1158,14 @@ public class Hook implements IXposedHookLoadPackage {
                 intent.setType("image/*");
                 activity.startActivityForResult(intent, REQ_PICK_SINGLE);
             } else {
-                // 多张：使用 ACTION_GET_CONTENT + EXTRA_ALLOW_MULTIPLE + createChooser
-                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                // 多张：使用 ACTION_OPEN_DOCUMENT 兼容性更好
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.setType("image/*");
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                Intent chooser = Intent.createChooser(intent, "选择多张图片");
-                activity.startActivityForResult(chooser, REQ_PICK_MULTI);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                }
+                activity.startActivityForResult(intent, REQ_PICK_MULTI);
             }
         } catch (Throwable t) {
             Log.e(TAG, "打开图片选择失败", t);
@@ -1169,18 +1197,25 @@ public class Hook implements IXposedHookLoadPackage {
             }
         } else if (requestCode == REQ_PICK_MULTI) {
             multiImagePaths.clear();
+            imageRotations.clear();  // 清空旋转角度
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && data.getClipData() != null) {
                 android.content.ClipData clipData = data.getClipData();
                 for (int i = 0; i < clipData.getItemCount(); i++) {
                     android.content.ClipData.Item item = clipData.getItemAt(i);
                     if (item.getUri() != null) {
                         String path = copyImageFromUri(ctx, item.getUri());
-                        if (path != null && !path.isEmpty()) multiImagePaths.add(path);
+                        if (path != null && !path.isEmpty()) {
+                            multiImagePaths.add(path);
+                            imageRotations.add(0);  // 默认旋转0度
+                        }
                     }
                 }
             } else if (data.getData() != null) {
                 String path = copyImageFromUri(ctx, data.getData());
-                if (path != null && !path.isEmpty()) multiImagePaths.add(path);
+                if (path != null && !path.isEmpty()) {
+                    multiImagePaths.add(path);
+                    imageRotations.add(0);
+                }
             }
             currentImageIndex = 0;
             cameraEnabled = true;
@@ -2080,14 +2115,8 @@ public class Hook implements IXposedHookLoadPackage {
                         return;
                     }
                     
-                    // EXIF旋转校正（方盒做法）
-                    int rotation = getExifRotation(path);
-                    if (rotation != 0) {
-                        Matrix matrix = new Matrix();
-                        matrix.postRotate(rotation);
-                        bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-                    }
-                    
+                    // 方盒插件做法：直接传入原始Bitmap，不做EXIF旋转
+                    // 钉钉自己会处理EXIF方向
                     param.args[0] = bitmap;
                     Log.e(TAG, "【PicHook】" + className + " Bitmap替换成功");
                     
@@ -2313,7 +2342,18 @@ public class Hook implements IXposedHookLoadPackage {
                 return null;
             }
             
-            int rotation = getExifRotation(path);
+            // 应用自定义旋转角度
+            int rotation = 0;
+            int pathIndex = multiImagePaths.indexOf(path);
+            if (pathIndex >= 0 && pathIndex < imageRotations.size()) {
+                rotation = imageRotations.get(pathIndex);
+            }
+            
+            // 如果自定义旋转为0，尝试读取EXIF旋转
+            if (rotation == 0) {
+                rotation = getExifRotation(path);
+            }
+            
             if (rotation != 0) {
                 Matrix matrix = new Matrix();
                 matrix.postRotate(rotation);
@@ -2693,6 +2733,17 @@ public class Hook implements IXposedHookLoadPackage {
         } catch (Exception e) {
             multiImagePaths.clear();
         }
+        // 加载多张图片旋转角度
+        String rotationsJson = sh.getString("imageRotations", "[]");
+        try {
+            JSONArray rotArr = new JSONArray(rotationsJson);
+            imageRotations.clear();
+            for (int i = 0; i < rotArr.length(); i++) {
+                imageRotations.add(rotArr.getInt(i));
+            }
+        } catch (Exception e) {
+            imageRotations.clear();
+        }
         Log.e(TAG, "配置已加载: loc=" + locationEnabled + " wifi=" + wifiEnabled + " ble=" + bleEnabled + " cam=" + cameraEnabled);
     }
 
@@ -2718,6 +2769,12 @@ public class Hook implements IXposedHookLoadPackage {
             arr.put(path);
         }
         editor.putString("multiImagePaths", arr.toString());
+        // 保存旋转角度
+        JSONArray rotArr = new JSONArray();
+        for (int rot : imageRotations) {
+            rotArr.put(rot);
+        }
+        editor.putString("imageRotations", rotArr.toString());
         editor.apply();
         Log.e(TAG, "配置已保存");
     }
