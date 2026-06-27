@@ -138,6 +138,20 @@ public class Hook implements IXposedHookLoadPackage {
 
         Log.e(TAG, "包名匹配，开始Hook");
 
+        // 直接在 handleLoadPackage 中初始化并执行 Hook（不依赖 Application.attach）
+        // 通过反射获取当前应用的 Context
+        try {
+            Application app = (Application) XposedHelpers.callStaticMethod(
+                    XposedHelpers.findClass("android.app.ActivityThread", null),
+                    "currentApplication");
+            if (app != null) {
+                appContext = app.getApplicationContext();
+                Log.e(TAG, "handleLoadPackage 直接获取到Context");
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "handleLoadPackage 获取Context失败", t);
+        }
+
         // 使用 Application.attach 获取 Context，同时注册 Activity 回调显示悬浮窗
         XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
             @Override
@@ -1918,155 +1932,56 @@ public class Hook implements IXposedHookLoadPackage {
     // ======================== Hook 相机 ========================
 
     private void hookCamera(XC_LoadPackage.LoadPackageParam lpparam) {
-        Log.e(TAG, "【PicHook】开始加载照片Hook...");
-        ClassLoader cl = lpparam.classLoader;
+        Log.e(TAG, "【PicHook】start PicHook...");
+        final ClassLoader cl = lpparam.classLoader;
 
-        // ===== 第1层：Hook CameraActivity2 的内部类 onTakePicture(Bitmap) =====
-        for (int idx = 1; idx <= 15; idx++) {
-            try {
-                final int classIdx = idx;
-                Class<?> innerClass = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2$" + classIdx);
-                for (java.lang.reflect.Method m : innerClass.getDeclaredMethods()) {
-                    if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
-                            && m.getParameterTypes()[0] == Bitmap.class) {
-                        final String className = innerClass.getName();
-                        XposedHelpers.findAndHookMethod(innerClass, "onTakePicture",
-                                Bitmap.class, new XC_MethodHook() {
-                            @Override
-                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                                if (cameraEnabled) {
-                                    Bitmap fakeBitmap = getFakeBitmap();
-                                    if (fakeBitmap != null) {
-                                        param.args[0] = fakeBitmap;
-                                        Log.e(TAG, "【PicHook】" + className + ".onTakePicture 已替换Bitmap");
-                                    }
-                                }
-                            }
-                        });
-                        Log.e(TAG, "【PicHook】" + className + " Hook成功");
-                        break;
-                    }
-                }
-            } catch (Throwable ignored) {}
-        }
+        // ===== Hook 1: CameraActivity2 内部类 onTakePicture(Bitmap) =====
+        // 方盒硬编码 $3，我们同时尝试硬编码+动态扫描
+        hookCameraActivityMethod(cl, "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2");
 
-        // ===== 第2层：Hook CameraActivity3.onTakePicture(Bitmap) =====
+        // ===== Hook 2: CameraActivity3 onTakePicture(Bitmap) =====
+        hookCameraActivityMethod(cl, "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3");
+
+        // ===== Hook 3: Camera.takePicture -> 级联Hook onPictureTaken =====
+        // 这是方盒的核心机制
         try {
-            boolean found3 = false;
-            // 先尝试 CameraActivity3 自身
-            try {
-                Class<?> cameraActivity3 = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3");
-                for (java.lang.reflect.Method m : cameraActivity3.getDeclaredMethods()) {
-                    if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
-                            && m.getParameterTypes()[0] == Bitmap.class) {
-                        XposedHelpers.findAndHookMethod(cameraActivity3, "onTakePicture",
-                                Bitmap.class, new XC_MethodHook() {
-                            @Override
-                            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                                if (cameraEnabled) {
-                                    Bitmap fakeBitmap = getFakeBitmap();
-                                    if (fakeBitmap != null) {
-                                        param.args[0] = fakeBitmap;
-                                        Log.e(TAG, "【PicHook】CameraActivity3.onTakePicture 已替换Bitmap");
-                                    }
-                                }
-                            }
-                        });
-                        Log.e(TAG, "【PicHook】CameraActivity3.onTakePicture Hook成功");
-                        found3 = true;
-                        break;
-                    }
-                }
-            } catch (Throwable ignored) {}
-            // 再尝试 CameraActivity3 的内部类
-            if (!found3) {
-                for (int idx = 1; idx <= 15; idx++) {
-                    try {
-                        final int classIdx = idx;
-                        Class<?> innerClass = cl.loadClass("com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3$" + classIdx);
-                        for (java.lang.reflect.Method m : innerClass.getDeclaredMethods()) {
-                            if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
-                                    && m.getParameterTypes()[0] == Bitmap.class) {
-                                final String className = innerClass.getName();
-                                XposedHelpers.findAndHookMethod(innerClass, "onTakePicture",
-                                        Bitmap.class, new XC_MethodHook() {
-                                    @Override
-                                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                                        if (cameraEnabled) {
-                                            Bitmap fakeBitmap = getFakeBitmap();
-                                            if (fakeBitmap != null) {
-                                                param.args[0] = fakeBitmap;
-                                                Log.e(TAG, "【PicHook】" + className + " 已替换Bitmap");
-                                            }
-                                        }
-                                    }
-                                });
-                                Log.e(TAG, "【PicHook】" + className + " Hook成功");
-                                found3 = true;
-                                break;
-                            }
-                        }
-                        if (found3) break;
-                    } catch (Throwable ignored) {}
-                }
-            }
-        } catch (Throwable t) {
-            Log.e(TAG, "【PicHook】CameraActivity3 Hook失败: " + t.getMessage());
-        }
-
-        // ===== 第3层：Hook Camera.takePicture 动态扫描调用者并级联Hook onPictureTaken(byte[]) =====
-        try {
-            XposedHelpers.findAndHookMethod("android.hardware.Camera", lpparam.classLoader,
-                    "takePicture", "android.hardware.Camera.ShutterCallback",
-                    "android.hardware.Camera.PictureCallback",
-                    "android.hardware.Camera.PictureCallback",
-                    "android.hardware.Camera.PictureCallback", new XC_MethodHook() {
+            XposedHelpers.findAndHookMethod("android.hardware.Camera", cl,
+                    "takePicture",
+                    android.hardware.Camera.ShutterCallback.class,
+                    android.hardware.Camera.PictureCallback.class,
+                    android.hardware.Camera.PictureCallback.class,
+                    android.hardware.Camera.PictureCallback.class,
+                    new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    // 获取JPEG回调对象及其类
                     Object jpegCallback = param.args[3];
-                    if (jpegCallback != null) {
-                        Class<?> callbackClass = jpegCallback.getClass();
-                        String className = callbackClass.getName();
-                        
-                        // 去重检查
-                        if (hookedPictureClasses.contains(className)) {
-                            return;
-                        }
-                        hookedPictureClasses.add(className);
-                        Log.e(TAG, "【PicHook】Camera.takePicture 调用者: " + className);
-                        
-                        // 动态Hook该回调类的 onPictureTaken 方法
-                                    try {
-                                        XposedHelpers.findAndHookMethod(callbackClass, "onPictureTaken",
-                                                byte[].class, android.hardware.Camera.class, new XC_MethodHook() {
-                                            @Override
-                                            protected void beforeHookedMethod(MethodHookParam param2) throws Throwable {
-                                                if (cameraEnabled) {
-                                                    byte[] fakeData = getFakeImageDataWithExif();
-                                                    if (fakeData != null) {
-                                                        param2.args[0] = fakeData;
-                                                        Log.e(TAG, "【PicHook】onPictureTaken 已替换byte[] (" + className + ")");
-                                                    }
-                                                }
-                                            }
-                                        });
-                                        Log.e(TAG, "【PicHook】动态Hook onPictureTaken 成功: " + className);
-                        } catch (Throwable t) {
-                            Log.e(TAG, "【PicHook】动态Hook onPictureTaken 失败: " + t.getMessage());
-                        }
-                    }
+                    if (jpegCallback == null) return;
+                    
+                    Class<?> callbackClass = jpegCallback.getClass();
+                    String className = callbackClass.getName();
+                    
+                    if (hookedPictureClasses.contains(className)) return;
+                    hookedPictureClasses.add(className);
+                    
+                    Log.e(TAG, "【PicHook】Camera.takePicture callback class: " + className);
+                    
+                    // 使用 XposedBridge.hookMethod 直接Hook（方盒的做法）
+                    hookPictureCallbackClass(callbackClass, className);
                 }
             });
-            Log.e(TAG, "【PicHook】Camera.takePicture Hook成功（级联模式）");
+            Log.e(TAG, "【PicHook】Camera.takePicture Hook OK");
         } catch (Throwable t) {
-            Log.e(TAG, "【PicHook】Camera.takePicture Hook失败: " + t.getMessage());
+            Log.e(TAG, "【PicHook】Camera.takePicture Hook FAIL: " + t.getMessage());
         }
 
-        // ===== 第4层：兜底 Hook MediaStore.insertImage =====
+        // ===== Hook 4: 水印处理类自动扫描 =====
+        hookWatermarkClass(cl);
+
+        // ===== Hook 5: MediaStore.insertImage 兜底 =====
         try {
             XposedHelpers.findAndHookMethod(MediaStore.Images.Media.class, "insertImage",
-                    android.content.ContentResolver.class, String.class, String.class, String.class, new XC_MethodHook() {
+                    android.content.ContentResolver.class, String.class, String.class, String.class,
+                    new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     if (cameraEnabled) {
@@ -2075,34 +1990,228 @@ public class Hook implements IXposedHookLoadPackage {
                     }
                 }
             });
-            Log.e(TAG, "【PicHook】MediaStore.insertImage Hook成功");
+            Log.e(TAG, "【PicHook】MediaStore.insertImage Hook OK");
         } catch (Throwable t) {
-            Log.e(TAG, "【PicHook】MediaStore Hook失败: " + t.getMessage());
+            Log.e(TAG, "【PicHook】MediaStore Hook FAIL: " + t.getMessage());
         }
 
-        // ===== 保留水印处理类自动扫描 =====
+        Log.e(TAG, "【PicHook】PicHook loaded done");
+    }
+
+    /**
+     * Hook CameraActivity 的 onTakePicture(Bitmap) 方法
+     * 先尝试硬编码的内部类（方盒用$3），再动态扫描$1~$20
+     */
+    private void hookCameraActivityMethod(ClassLoader cl, String baseClassName) {
+        final String tag = "【PicHook】";
+        
+        // 方法1：先尝试方盒的硬编码方式
+        String[] hardcoded = {"$3", "$1", "$2", "$4", "$5"};
+        for (String suffix : hardcoded) {
+            try {
+                String fullClassName = baseClassName + suffix;
+                Class<?> cls = cl.loadClass(fullClassName);
+                boolean found = false;
+                for (java.lang.reflect.Method m : cls.getDeclaredMethods()) {
+                    if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
+                            && m.getParameterTypes()[0] == Bitmap.class) {
+                        doHookOnTakePicture(cls, fullClassName);
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) return;
+            } catch (Throwable ignored) {}
+        }
+        
+        // 方法2：动态扫描所有内部类
+        for (int idx = 1; idx <= 20; idx++) {
+            try {
+                String fullClassName = baseClassName + "$" + idx;
+                Class<?> cls = cl.loadClass(fullClassName);
+                for (java.lang.reflect.Method m : cls.getDeclaredMethods()) {
+                    if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
+                            && m.getParameterTypes()[0] == Bitmap.class) {
+                        doHookOnTakePicture(cls, fullClassName);
+                        return;
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+        
+        // 方法3：检查类本身是否有 onTakePicture
+        try {
+            Class<?> cls = cl.loadClass(baseClassName);
+            for (java.lang.reflect.Method m : cls.getDeclaredMethods()) {
+                if ("onTakePicture".equals(m.getName()) && m.getParameterTypes().length == 1
+                        && m.getParameterTypes()[0] == Bitmap.class) {
+                    doHookOnTakePicture(cls, baseClassName);
+                    return;
+                }
+            }
+        } catch (Throwable ignored) {}
+        
+        Log.e(TAG, tag + baseClassName + " 未找到 onTakePicture(Bitmap) 方法");
+    }
+
+    private void doHookOnTakePicture(final Class<?> cls, final String className) {
+        try {
+            XposedHelpers.findAndHookMethod(cls, "onTakePicture", Bitmap.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!cameraEnabled) return;
+                    Log.e(TAG, "【PicHook】" + className + ".onTakePicture triggered, cameraEnabled=" + cameraEnabled);
+                    
+                    String path = getCurrentImagePath();
+                    if (path == null || path.isEmpty()) {
+                        Log.e(TAG, "【PicHook】图片路径为空，跳过替换");
+                        return;
+                    }
+                    
+                    File file = new File(path);
+                    if (!file.exists()) {
+                        Log.e(TAG, "【PicHook】图片文件不存在: " + path);
+                        return;
+                    }
+                    
+                    Bitmap bitmap = BitmapFactory.decodeFile(path);
+                    if (bitmap == null) {
+                        Log.e(TAG, "【PicHook】BitmapFactory.decodeFile 返回null: " + path);
+                        return;
+                    }
+                    
+                    // EXIF旋转校正（方盒做法）
+                    int rotation = getExifRotation(path);
+                    if (rotation != 0) {
+                        Matrix matrix = new Matrix();
+                        matrix.postRotate(rotation);
+                        bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                    }
+                    
+                    param.args[0] = bitmap;
+                    Log.e(TAG, "【PicHook】" + className + " Bitmap替换成功");
+                    
+                    // 多张模式切换到下一张
+                    advanceImageIndex();
+                }
+            });
+            Log.e(TAG, "【PicHook】" + className + " Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "【PicHook】" + className + " Hook失败: " + t.getMessage());
+        }
+    }
+
+    /**
+     * 动态Hook PictureCallback实现类的 onPictureTaken 方法
+     */
+    private void hookPictureCallbackClass(Class<?> callbackClass, String className) {
+        try {
+            // 方法1：先尝试标准签名 onPictureTaken(byte[], Camera)
+            try {
+                XposedHelpers.findAndHookMethod(callbackClass, "onPictureTaken",
+                        byte[].class, android.hardware.Camera.class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (!cameraEnabled) return;
+                        Log.e(TAG, "【PicHook】" + className + ".onPictureTaken triggered");
+                        
+                        String path = getCurrentImagePath();
+                        if (path == null || path.isEmpty()) return;
+                        
+                        byte[] fakeData = readImageFileWithExif(path);
+                        if (fakeData != null) {
+                            param.args[0] = fakeData;
+                            Log.e(TAG, "【PicHook】" + className + " byte[]替换成功");
+                            advanceImageIndex();
+                        }
+                    }
+                });
+                Log.e(TAG, "【PicHook】" + className + " onPictureTaken(byte[],Camera) Hook成功");
+                return;
+            } catch (Throwable ignored) {}
+            
+            // 方法2：尝试 onPictureTaken(byte[]) 无Camera参数
+            try {
+                XposedHelpers.findAndHookMethod(callbackClass, "onPictureTaken",
+                        byte[].class, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (!cameraEnabled) return;
+                        Log.e(TAG, "【PicHook】" + className + ".onPictureTaken(byte[]) triggered");
+                        
+                        String path = getCurrentImagePath();
+                        if (path == null || path.isEmpty()) return;
+                        
+                        byte[] fakeData = readImageFileWithExif(path);
+                        if (fakeData != null) {
+                            param.args[0] = fakeData;
+                            Log.e(TAG, "【PicHook】" + className + " byte[]替换成功");
+                            advanceImageIndex();
+                        }
+                    }
+                });
+                Log.e(TAG, "【PicHook】" + className + " onPictureTaken(byte[]) Hook成功");
+                return;
+            } catch (Throwable ignored) {}
+            
+            // 方法3：遍历所有方法找到 onPictureTaken
+            for (java.lang.reflect.Method m : callbackClass.getDeclaredMethods()) {
+                if ("onPictureTaken".equals(m.getName()) && m.getParameterTypes().length >= 1
+                        && m.getParameterTypes()[0] == byte[].class) {
+                    XposedHelpers.findAndHookMethod(callbackClass, "onPictureTaken",
+                            m.getParameterTypes(), new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            if (!cameraEnabled) return;
+                            String path = getCurrentImagePath();
+                            if (path == null || path.isEmpty()) return;
+                            byte[] fakeData = readImageFileWithExif(path);
+                            if (fakeData != null) {
+                                param.args[0] = fakeData;
+                                Log.e(TAG, "【PicHook】" + className + " onPictureTaken 替换成功");
+                                advanceImageIndex();
+                            }
+                        }
+                    });
+                    Log.e(TAG, "【PicHook】" + className + " onPictureTaken Hook成功(反射)");
+                    return;
+                }
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "【PicHook】Hook " + className + " 失败: " + t.getMessage());
+        }
+    }
+
+    /**
+     * Hook 水印处理类
+     */
+    private void hookWatermarkClass(ClassLoader cl) {
         try {
             SharedPreferences prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             String receiveClassName = prefs.getString("ReceiveClass", "");
+            
             if (receiveClassName == null || receiveClassName.isEmpty()) {
                 receiveClassName = autoScanReceiveClass(cl);
                 if (receiveClassName != null && !receiveClassName.isEmpty()) {
                     prefs.edit().putString("ReceiveClass", receiveClassName).apply();
-                    Log.e(TAG, "【PicHook】自动扫描到水印处理类: " + receiveClassName);
+                    Log.e(TAG, "【PicHook】扫描到水印处理类: " + receiveClassName);
                 }
             }
+            
             if (receiveClassName != null && !receiveClassName.isEmpty()) {
                 Class<?> receiveClass = cl.loadClass(receiveClassName);
                 XposedHelpers.findAndHookMethod(receiveClass, "a",
                         Context.class, byte[].class, new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (cameraEnabled) {
-                            byte[] fakeData = getFakeImageDataWithExif();
-                            if (fakeData != null) {
-                                param.args[1] = fakeData;
-                                Log.e(TAG, "【PicHook】ReceiveClass.a 已替换byte[]");
-                            }
+                        if (!cameraEnabled) return;
+                        String path = getCurrentImagePath();
+                        if (path == null || path.isEmpty()) return;
+                        byte[] fakeData = readImageFileWithExif(path);
+                        if (fakeData != null) {
+                            param.args[1] = fakeData;
+                            Log.e(TAG, "【PicHook】ReceiveClass.a 替换成功");
+                            advanceImageIndex();
                         }
                     }
                 });
@@ -2111,16 +2220,13 @@ public class Hook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             Log.e(TAG, "【PicHook】ReceiveClass Hook失败: " + t.getMessage());
         }
-
-        Log.e(TAG, "【PicHook】照片Hook加载完成");
     }
 
     /**
-     * 自动扫描水印处理类（参考钉XJ插件）
+     * 自动扫描水印处理类（仅尝试已知类名，不使用DexPathList遍历）
      */
     private String autoScanReceiveClass(ClassLoader cl) {
         try {
-            // 方法1：尝试常见的类名
             String[] knownClasses = {
                 "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2$a",
                 "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3$a",
@@ -2140,40 +2246,27 @@ public class Hook implements IXposedHookLoadPackage {
                     }
                 } catch (Throwable ignored) {}
             }
-            
-            // 方法2：遍历facebox包下的类（简化版，通过反射DexPathList）
-            try {
-                Object pathList = XposedHelpers.getObjectField(cl, "pathList");
-                Object[] dexElements = (Object[]) XposedHelpers.getObjectField(pathList, "dexElements");
-                for (Object element : dexElements) {
-                    Object dexFile = XposedHelpers.getObjectField(element, "dexFile");
-                    if (dexFile != null) {
-                        java.util.Enumeration<String> entries = 
-                            (java.util.Enumeration<String>) XposedHelpers.callMethod(dexFile, "entries");
-                        while (entries.hasMoreElements()) {
-                            String entry = entries.nextElement();
-                            if (entry.startsWith("com/alibaba/dingtalk/facebox/") 
-                                    && entry.contains("$") 
-                                    && !entry.contains("R$")
-                                    && !entry.contains("BuildConfig")) {
-                                try {
-                                    String className = entry.replace('/', '.').replace(".class", "");
-                                    Class<?> cls = cl.loadClass(className);
-                                    for (java.lang.reflect.Method m : cls.getDeclaredMethods()) {
-                                        if ("a".equals(m.getName()) && m.getParameterTypes().length == 2
-                                                && m.getParameterTypes()[0] == Context.class
-                                                && m.getParameterTypes()[1] == byte[].class) {
-                                            Log.e(TAG, "【PicHook】扫描到水印处理类: " + className);
-                                            return className;
-                                        }
-                                    }
-                                } catch (Throwable ignored) {}
+
+            // 扩展扫描更多可能的内部类
+            String[] baseClasses = {
+                "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity2",
+                "com.alibaba.dingtalk.facebox.camera.activity.CameraActivity3",
+            };
+            for (String baseClass : baseClasses) {
+                for (int idx = 1; idx <= 20; idx++) {
+                    try {
+                        String fullClassName = baseClass + "$" + idx;
+                        Class<?> cls = cl.loadClass(fullClassName);
+                        for (java.lang.reflect.Method m : cls.getDeclaredMethods()) {
+                            if ("a".equals(m.getName()) && m.getParameterTypes().length == 2
+                                    && m.getParameterTypes()[0] == Context.class
+                                    && m.getParameterTypes()[1] == byte[].class) {
+                                Log.e(TAG, "【PicHook】扫描到水印处理类: " + fullClassName);
+                                return fullClassName;
                             }
                         }
-                    }
+                    } catch (Throwable ignored) {}
                 }
-            } catch (Throwable t) {
-                Log.e(TAG, "【PicHook】Dex扫描失败: " + t.getMessage());
             }
         } catch (Throwable t) {
             Log.e(TAG, "【PicHook】自动扫描失败", t);
@@ -2182,59 +2275,56 @@ public class Hook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 获取假图片Bitmap（支持多张循环 + EXIF旋转校正）
+     * 获取当前应该使用的图片路径
      */
-    private Bitmap getFakeBitmap() {
+    private String getCurrentImagePath() {
+        String path = null;
+        if (cameraMode == 0) {
+            path = singleImagePath;
+        } else {
+            if (!multiImagePaths.isEmpty() && currentImageIndex < multiImagePaths.size()) {
+                path = multiImagePaths.get(currentImageIndex);
+            }
+        }
+        if (path == null || path.isEmpty()) {
+            path = "/sdcard/Download/00.jpg";
+        }
+        return path;
+    }
+
+    /**
+     * 多张模式切换到下一张
+     */
+    private void advanceImageIndex() {
+        if (cameraMode == 1 && !multiImagePaths.isEmpty()) {
+            currentImageIndex = (currentImageIndex + 1) % multiImagePaths.size();
+            savePrefs();
+        }
+    }
+
+    /**
+     * 读取图片文件为byte[]（带EXIF旋转处理，方盒 n.a.c 的做法）
+     */
+    private byte[] readImageFileWithExif(String path) {
         try {
-            String path = null;
-            if (cameraMode == 0) {
-                path = singleImagePath;
-            } else {
-                if (!multiImagePaths.isEmpty() && currentImageIndex < multiImagePaths.size()) {
-                    path = multiImagePaths.get(currentImageIndex);
-                }
-            }
-            // 钉XJ插件默认路径兜底
-            if (path == null || path.isEmpty()) {
-                path = "/sdcard/Download/00.jpg";
-            }
-            File file = new File(path);
-            if (!file.exists()) return null;
-
             Bitmap bitmap = BitmapFactory.decodeFile(path);
-            if (bitmap == null) return null;
-
-            // EXIF旋转校正（钉XJ做法：无EXIF时旋转270度）
-            int rotation = getExifRotation(path);
-            if (rotation == 0) {
-                // 钉钉相机通常是竖屏，无EXIF时默认旋转270度
-                rotation = 270;
+            if (bitmap == null) {
+                Log.e(TAG, "【PicHook】readImageFileWithExif: decodeFile返回null");
+                return null;
             }
+            
+            int rotation = getExifRotation(path);
             if (rotation != 0) {
                 Matrix matrix = new Matrix();
                 matrix.postRotate(rotation);
                 bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
             }
-
-            Log.e(TAG, "【PicHook】已加载假图片Bitmap: " + path);
-
-            // 切换到下一张（多张循环模式）
-            if (cameraMode == 1 && !multiImagePaths.isEmpty()) {
-                currentImageIndex = (currentImageIndex + 1) % multiImagePaths.size();
-                uiHandler.post(() -> {
-                    updateImageStatus();
-                    if (imagePreviewContainer != null) {
-                        refreshImagePreviews(appContext);
-                    }
-                    Toast.makeText(appContext,
-                            "已切换到第 " + (currentImageIndex + 1) + " 张 / 共 " + multiImagePaths.size() + " 张",
-                            Toast.LENGTH_SHORT).show();
-                });
-            }
-
-            return bitmap;
+            
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
+            return bos.toByteArray();
         } catch (Throwable t) {
-            Log.e(TAG, "【PicHook】获取假图片Bitmap失败", t);
+            Log.e(TAG, "【PicHook】readImageFileWithExif 失败", t);
         }
         return null;
     }
@@ -2262,23 +2352,6 @@ public class Hook implements IXposedHookLoadPackage {
         return 0;
     }
 
-    /**
-     * 获取假图片byte[]数据（带EXIF旋转校正，用于ReceiveClass.a的byte[]替换）
-     */
-    private byte[] getFakeImageDataWithExif() {
-        try {
-            Bitmap fakeBitmap = getFakeBitmap();
-            if (fakeBitmap == null) return null;
-
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            fakeBitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
-            return bos.toByteArray();
-        } catch (Throwable t) {
-            Log.e(TAG, "【PicHook】获取假图片byte[]失败", t);
-        }
-        return null;
-    }
-
     private Object createFakePictureCallback(Object originalCallback) {
         try {
             Class<?> pictureCallbackClass = Class.forName("android.hardware.Camera$PictureCallback");
@@ -2287,20 +2360,12 @@ public class Hook implements IXposedHookLoadPackage {
                     new Class<?>[]{pictureCallbackClass},
                     (proxy, method, args) -> {
                         if ("onPictureTaken".equals(method.getName()) && args.length > 0) {
-                            byte[] fakeData = getFakeImageData();
-                            if (fakeData != null) {
-                                args[0] = fakeData;
-                                if (cameraMode == 1 && !multiImagePaths.isEmpty()) {
-                                    currentImageIndex = (currentImageIndex + 1) % multiImagePaths.size();
-                                    uiHandler.post(() -> {
-                                        updateImageStatus();
-                                        if (imagePreviewContainer != null) {
-                                            refreshImagePreviews(appContext);
-                                        }
-                                        Toast.makeText(appContext,
-                                                "已切换到第 " + (currentImageIndex + 1) + " 张 / 共 " + multiImagePaths.size() + " 张",
-                                                Toast.LENGTH_SHORT).show();
-                                    });
+                            String picPath = getCurrentImagePath();
+                            if (picPath != null && !picPath.isEmpty()) {
+                                byte[] fakeData = readImageFileWithExif(picPath);
+                                if (fakeData != null) {
+                                    args[0] = fakeData;
+                                    advanceImageIndex();
                                 }
                             }
                         }
@@ -2314,27 +2379,15 @@ public class Hook implements IXposedHookLoadPackage {
 
     private byte[] getFakeImageData() {
         try {
-            String path = null;
-            if (cameraMode == 0) {
-                path = singleImagePath;
-            } else {
-                if (!multiImagePaths.isEmpty() && currentImageIndex < multiImagePaths.size()) {
-                    path = multiImagePaths.get(currentImageIndex);
-                }
-            }
+            String path = getCurrentImagePath();
             if (path != null && !path.isEmpty()) {
                 File file = new File(path);
                 if (file.exists()) {
-                    java.io.FileInputStream fis = new java.io.FileInputStream(file);
-                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                    byte[] buffer = new byte[1024];
-                    int len;
-                    while ((len = fis.read(buffer)) != -1) {
-                        bos.write(buffer, 0, len);
+                    byte[] data = readImageFileWithExif(path);
+                    if (data != null) {
+                        Log.e(TAG, "getFakeImageData: 已加载 " + path);
+                        return data;
                     }
-                    fis.close();
-                    Log.e(TAG, "已加载假图片: " + path);
-                    return bos.toByteArray();
                 }
             }
         } catch (Throwable t) {
