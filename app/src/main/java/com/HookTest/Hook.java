@@ -2241,19 +2241,18 @@ public class Hook implements IXposedHookLoadPackage {
                     Bitmap bitmap = BitmapFactory.decodeFile(path);
                     if (bitmap == null) return;
                     
-                    // 先应用EXIF旋转，再叠加用户手动旋转
-                    int rotation = getExifRotation(path);
-                    if (cameraMode == 0) {
-                        rotation = (rotation + singleImageRotation) % 360;
-                    }
-                    if (rotation != 0) {
+                    // 方盒插件精确做法：onTakePicture(Bitmap) 路径不做EXIF自动旋转
+                    // 钉钉内部保存Bitmap时会自行读取原文件EXIF并处理方向
+                    // 如果我们也做EXIF旋转，会导致钉钉双重旋转，图片方向错误
+                    // 只应用用户手动旋转（单张模式）
+                    if (cameraMode == 0 && singleImageRotation != 0) {
                         Matrix matrix = new Matrix();
-                        matrix.postRotate(rotation);
+                        matrix.postRotate(singleImageRotation);
                         bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
                     }
                     
                     param.args[0] = bitmap;
-                    Log.e(TAG, "【PicHook】" + className + " Bitmap替换成功");
+                    Log.e(TAG, "【PicHook】" + className + " Bitmap替换成功 (无EXIF自动旋转)");
                     advanceImageIndex();
                 }
             });
