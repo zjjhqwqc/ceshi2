@@ -94,6 +94,7 @@ public class Hook implements IXposedHookLoadPackage {
 
     // 相机替换相关
     private static String singleImagePath = "";
+    private static int singleImageRotation = 0; // 单张图片旋转角度
     private static List<String> multiImagePaths = new ArrayList<>();
     private static List<Integer> imageRotations = new ArrayList<>(); // 每张图片的旋转角度
     private static int currentImageIndex = 0;
@@ -947,14 +948,35 @@ public class Hook implements IXposedHookLoadPackage {
                 LinearLayout.LayoutParams imgParams = new LinearLayout.LayoutParams(160, 160);
                 imgView.setLayoutParams(imgParams);
                 imgView.setBackgroundColor(0xFFEEEEEE);
+                imgView.setScaleType(ImageView.ScaleType.CENTER_CROP);
                 try {
                     Bitmap bmp = BitmapFactory.decodeFile(singleImagePath);
-                    if (bmp != null) imgView.setImageBitmap(bmp);
+                    if (bmp != null) {
+                        // 应用单张旋转角度预览
+                        if (singleImageRotation != 0) {
+                            Matrix matrix = new Matrix();
+                            matrix.postRotate(singleImageRotation);
+                            bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), matrix, true);
+                        }
+                        imgView.setImageBitmap(bmp);
+                    }
                 } catch (Exception e) {
                     Log.e(TAG, "加载单张缩略图失败", e);
                 }
                 imagePreviewContainer.addView(imgView);
                 layout.addView(imagePreviewContainer);
+
+                // 旋转按钮
+                Button rotateBtn = new Button(ctx);
+                rotateBtn.setText("↻ 旋转90° (当前" + singleImageRotation + "°)");
+                rotateBtn.setOnClickListener(v -> {
+                    singleImageRotation = (singleImageRotation + 90) % 360;
+                    savePrefs();
+                    hidePanel();
+                    uiHandler.postDelayed(() -> showPanel(ctx), 100);
+                    Toast.makeText(ctx, "单张图片旋转 " + singleImageRotation + "°", Toast.LENGTH_SHORT).show();
+                });
+                layout.addView(rotateBtn);
 
                 TextView pathText = createLabel(ctx, singleImagePath);
                 pathText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
@@ -2096,32 +2118,29 @@ public class Hook implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (!cameraEnabled) return;
-                    Log.e(TAG, "【PicHook】" + className + ".onTakePicture triggered, cameraEnabled=" + cameraEnabled);
                     
                     String path = getCurrentImagePath();
-                    if (path == null || path.isEmpty()) {
-                        Log.e(TAG, "【PicHook】图片路径为空，跳过替换");
-                        return;
-                    }
+                    if (path == null || path.isEmpty()) return;
                     
                     File file = new File(path);
-                    if (!file.exists()) {
-                        Log.e(TAG, "【PicHook】图片文件不存在: " + path);
-                        return;
-                    }
+                    if (!file.exists()) return;
                     
                     Bitmap bitmap = BitmapFactory.decodeFile(path);
-                    if (bitmap == null) {
-                        Log.e(TAG, "【PicHook】BitmapFactory.decodeFile 返回null: " + path);
-                        return;
+                    if (bitmap == null) return;
+                    
+                    // 先应用EXIF旋转，再叠加用户手动旋转
+                    int rotation = getExifRotation(path);
+                    if (cameraMode == 0) {
+                        rotation = (rotation + singleImageRotation) % 360;
+                    }
+                    if (rotation != 0) {
+                        Matrix matrix = new Matrix();
+                        matrix.postRotate(rotation);
+                        bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
                     }
                     
-                    // 方盒插件做法：直接传入原始Bitmap，不做EXIF旋转
-                    // 钉钉自己会处理EXIF方向
                     param.args[0] = bitmap;
                     Log.e(TAG, "【PicHook】" + className + " Bitmap替换成功");
-                    
-                    // 多张模式切换到下一张
                     advanceImageIndex();
                 }
             });
@@ -2337,26 +2356,30 @@ public class Hook implements IXposedHookLoadPackage {
      */
     private byte[] readImageFileWithExif(String path) {
         try {
-            File file = new File(path);
-            if (!file.exists()) {
-                Log.e(TAG, "【PicHook】readImageFileWithExif: 文件不存在 " + path);
+            Bitmap bitmap = BitmapFactory.decodeFile(path);
+            if (bitmap == null) {
+                Log.e(TAG, "【PicHook】readImageFileWithExif: decodeFile返回null");
                 return null;
             }
             
-            // 直接读取原始文件为byte[]，保留完整EXIF信息
-            // 不通过BitmapFactory解码再压缩，避免EXIF丢失
-            java.io.FileInputStream fis = new java.io.FileInputStream(file);
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
-            int len;
-            while ((len = fis.read(buffer)) != -1) {
-                bos.write(buffer, 0, len);
+            // 方盒插件 n.a.c 的精确做法：
+            // 1. 读取EXIF旋转角度
+            // 2. 物理旋转Bitmap像素
+            // 3. 压缩为byte[]（EXIF丢失但像素方向已正确）
+            int rotation = getExifRotation(path);
+            if (cameraMode == 0) {
+                rotation = (rotation + singleImageRotation) % 360;
             }
-            fis.close();
+            if (rotation != 0) {
+                Matrix matrix = new Matrix();
+                matrix.postRotate(rotation);
+                bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+                Log.e(TAG, "【PicHook】readImageFileWithExif: EXIF旋转 " + rotation + "°");
+            }
             
-            byte[] data = bos.toByteArray();
-            Log.e(TAG, "【PicHook】readImageFileWithExif: 直接读取原始文件 " + path + " (" + data.length + " bytes)");
-            return data;
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bos);
+            return bos.toByteArray();
         } catch (Throwable t) {
             Log.e(TAG, "【PicHook】readImageFileWithExif 失败", t);
         }
@@ -2716,6 +2739,7 @@ public class Hook implements IXposedHookLoadPackage {
         customBleAddress = sh.getString("bleAddress", "");
         customBleData = sh.getString("bleData", "");
         singleImagePath = sh.getString("singleImagePath", "");
+        singleImageRotation = sh.getInt("singleImageRotation", 0);
         currentImageIndex = sh.getInt("currentImageIndex", 0);
         String multiPathsJson = sh.getString("multiImagePaths", "[]");
         try {
@@ -2757,6 +2781,7 @@ public class Hook implements IXposedHookLoadPackage {
         editor.putString("bleAddress", customBleAddress);
         editor.putString("bleData", customBleData);
         editor.putString("singleImagePath", singleImagePath);
+        editor.putInt("singleImageRotation", singleImageRotation);
         editor.putInt("currentImageIndex", currentImageIndex);
         JSONArray arr = new JSONArray();
         for (String path : multiImagePaths) {
