@@ -3253,10 +3253,9 @@ public class Hook implements IXposedHookLoadPackage {
                 String signBase = "kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + KAMI_APPKEY;
                 String sign = md5(signBase);
 
-                // data明文 = &kami=xxx&markcode=xxx&t=xxx&sign=&APPKEY + MD5("&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + APPKEY)
-                // 与DEX完全一致，包含冗余MD5
-                String dataInnerMd5 = md5("&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + KAMI_APPKEY);
-                String plainData = "&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&sign=&" + KAMI_APPKEY + dataInnerMd5;
+                // data明文 = &kami=xxx&markcode=xxx&t=xxx&sign=md5值
+                // 与DEX完全一致
+                String plainData = "&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&sign=" + sign;
                 String encryptedData = rc4EncryptToHex(plainData, KAMI_RC4_KEY);
                 String urlStr = KAMI_API_BASE + "&app=" + KAMI_APPID
                         + "&data=" + java.net.URLEncoder.encode(encryptedData, "UTF-8")
