@@ -3248,9 +3248,15 @@ public class Hook implements IXposedHookLoadPackage {
                 if (androidId == null) androidId = "";
 
                 String timestamp = String.valueOf(System.currentTimeMillis());
+
+                // URL sign = MD5("kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + APPKEY)
                 String signBase = "kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + KAMI_APPKEY;
                 String sign = md5(signBase);
-                String plainData = "&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&sign=" + sign;
+
+                // data明文 = &kami=xxx&markcode=xxx&t=xxx&sign=&APPKEY + MD5("&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + APPKEY)
+                // 与DEX完全一致，包含冗余MD5
+                String dataInnerMd5 = md5("&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + KAMI_APPKEY);
+                String plainData = "&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&sign=&" + KAMI_APPKEY + dataInnerMd5;
                 String encryptedData = rc4EncryptToHex(plainData, KAMI_RC4_KEY);
                 String urlStr = KAMI_API_BASE + "&app=" + KAMI_APPID
                         + "&data=" + java.net.URLEncoder.encode(encryptedData, "UTF-8")
@@ -3302,8 +3308,11 @@ public class Hook implements IXposedHookLoadPackage {
             switch (code) {
                 case "200":
                     try {
-                        String kamiValue = json.optString("kami", kami);
-                        String vipTs = json.optString("vip", "0");
+                        // PHP返回结构: {"code":"200","msg":"{\"kami\":\"xxx\",\"vip\":\"xxx\"}"}
+                        // vip在msg字段内部的JSON子对象中
+                        org.json.JSONObject dataObj = new org.json.JSONObject(msg);
+                        String kamiValue = dataObj.optString("kami", kami);
+                        String vipTs = dataObj.optString("vip", "0");
                         long vipTime = Long.parseLong(vipTs) * 1000L;
                         long now = System.currentTimeMillis();
 
