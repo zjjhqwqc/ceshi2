@@ -3305,18 +3305,30 @@ public class Hook implements IXposedHookLoadPackage {
                         String kamiValue = json.optString("kami", kami);
                         String vipTs = json.optString("vip", "0");
                         long vipTime = Long.parseLong(vipTs) * 1000L;
-                        String dateStr = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-                                .format(new java.util.Date(vipTime));
-                        android.widget.Toast.makeText(context, "卡密到期时间:" + dateStr, android.widget.Toast.LENGTH_LONG).show();
+                        long now = System.currentTimeMillis();
+
+                        // 先保存卡密（无论是否过期）
                         spPut(context, KAMI_SP_KEY, kamiValue);
-                        if (sCurrentDialog != null && sCurrentDialog.isShowing()) {
-                            sCurrentDialog.dismiss();
-                            sCurrentDialog = null;
-                        }
-                        // 通知回调：验证通过
-                        if (sCallback != null) {
-                            sCallback.onResult(true);
-                            sCallback = null;
+
+                        if (vipTime > 0 && vipTime < now) {
+                            // 卡密已过期
+                            android.widget.Toast.makeText(context, "卡密已过期", android.widget.Toast.LENGTH_LONG).show();
+                            // 过期不通知回调，保持功能禁用
+                        } else {
+                            // 卡密有效，显示到期时间
+                            String dateStr = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                                    .format(new java.util.Date(vipTime));
+                            android.widget.Toast.makeText(context, "卡密到期时间:" + dateStr, android.widget.Toast.LENGTH_LONG).show();
+
+                            if (sCurrentDialog != null && sCurrentDialog.isShowing()) {
+                                sCurrentDialog.dismiss();
+                                sCurrentDialog = null;
+                            }
+                            // 通知回调：验证通过
+                            if (sCallback != null) {
+                                sCallback.onResult(true);
+                                sCallback = null;
+                            }
                         }
                     } catch (Exception e) {
                         android.widget.Toast.makeText(context, "验证成功但解析到期时间失败", android.widget.Toast.LENGTH_SHORT).show();
