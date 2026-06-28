@@ -3235,7 +3235,6 @@ public class Hook implements IXposedHookLoadPackage {
             // 停止所有功能开关
             wifiEnabled = false;
             bleEnabled = false;
-            gpsEnabled = false;
             locationEnabled = false;
             cameraEnabled = false;
             // 停止心跳
