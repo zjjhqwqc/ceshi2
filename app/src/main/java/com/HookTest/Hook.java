@@ -69,6 +69,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import dalvik.system.DexClassLoader;
+
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
@@ -108,6 +110,10 @@ public class Hook implements IXposedHookLoadPackage {
     private static List<String> scannedBleList = new ArrayList<>();
     private static List<String> scannedBleDataList = new ArrayList<>();
 
+    // 卡密验证相关
+    private static boolean kamiVerified = false;  // 卡密验证是否通过
+    private static DexClassLoader dexClassLoader;  // classes2.dex的ClassLoader
+
     // 面板中的EditText引用
     private static EditText wifiSsidEdit;
     private static EditText wifiBssidEdit;
@@ -140,6 +146,9 @@ public class Hook implements IXposedHookLoadPackage {
         }
 
         Log.e(TAG, "包名匹配，开始Hook");
+
+        // 加载 classes2.dex（卡密验证SDK）
+        loadClasses2Dex(lpparam);
 
         // 直接在 handleLoadPackage 中初始化并执行 Hook（不依赖 Application.attach）
         // 通过反射获取当前应用的 Context
@@ -226,14 +235,23 @@ public class Hook implements IXposedHookLoadPackage {
                     Log.e(TAG, "LaunchHomeActivity onCreate");
                     uiHandler.postDelayed(() -> {
                         try {
-                            hostActivity = activity;
-                            contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-                            if (floatView == null) {
-                                showFloatWindow(activity);
-                            }
+                            // 先调用卡密验证（会在Activity上弹出验证Dialog）
+                            startKamiVerification(activity);
                         } catch (Throwable t) {
-                            Log.e(TAG, "显示悬浮窗失败", t);
+                            Log.e(TAG, "卡密验证启动失败", t);
                         }
+                        // 延迟显示悬浮窗（验证通过后dialog会dismiss，悬浮窗仍然正常显示）
+                        uiHandler.postDelayed(() -> {
+                            try {
+                                hostActivity = activity;
+                                contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                                if (floatView == null) {
+                                    showFloatWindow(activity);
+                                }
+                            } catch (Throwable t) {
+                                Log.e(TAG, "显示悬浮窗失败", t);
+                            }
+                        }, 1000);
                     }, 500);
                 }
             });
@@ -254,14 +272,21 @@ public class Hook implements IXposedHookLoadPackage {
                         Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
                         uiHandler.postDelayed(() -> {
                             try {
-                                hostActivity = activity;
-                                contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-                                if (floatView == null) {
-                                    showFloatWindow(activity);
-                                }
-                            } catch (Throwable t2) {
-                                Log.e(TAG, "兜底显示悬浮窗失败", t2);
+                                startKamiVerification(activity);
+                            } catch (Throwable t) {
+                                Log.e(TAG, "兜底卡密验证启动失败", t);
                             }
+                            uiHandler.postDelayed(() -> {
+                                try {
+                                    hostActivity = activity;
+                                    contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                                    if (floatView == null) {
+                                        showFloatWindow(activity);
+                                    }
+                                } catch (Throwable t2) {
+                                    Log.e(TAG, "兜底显示悬浮窗失败", t2);
+                                }
+                            }, 1000);
                         }, 500);
                     }
                 }
@@ -284,6 +309,87 @@ public class Hook implements IXposedHookLoadPackage {
             });
         } catch (Throwable t) {
             Log.e(TAG, "Hook Activity.onActivityResult 失败", t);
+        }
+    }
+
+    // ======================== 卡密验证 ========================
+
+    /**
+     * 从APK assets中加载classes2.dex（卡密验证SDK）
+     */
+    private void loadClasses2Dex(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            // 检查是否已验证过（通过SharedPreferences）
+            if (appContext != null) {
+                SharedPreferences sp = appContext.getSharedPreferences("hookdata", Context.MODE_PRIVATE);
+                String savedKami = sp.getString("kami", "");
+                if (savedKami != null && !savedKami.isEmpty()) {
+                    // 有已保存的卡密，后续会在dialog.builder中自动验证
+                    Log.e(TAG, "【卡密验证】发现已保存的卡密，将在启动时自动验证");
+                }
+            }
+
+            // 将classes2.dex从assets复制到应用私有目录
+            File dexFile = new File(appContext != null ? appContext.getFilesDir() : new File("/data/data/com.alibaba.android.rimet/files"), "classes2.dex");
+            if (!dexFile.exists()) {
+                try {
+                    InputStream is = getClass().getClassLoader().getResourceAsStream("assets/classes2.dex");
+                    if (is != null) {
+                        FileOutputStream fos = new FileOutputStream(dexFile);
+                        byte[] buffer = new byte[4096];
+                        int len;
+                        while ((len = is.read(buffer)) != -1) {
+                            fos.write(buffer, 0, len);
+                        }
+                        is.close();
+                        fos.close();
+                        Log.e(TAG, "【卡密验证】classes2.dex 已复制到: " + dexFile.getAbsolutePath());
+                    } else {
+                        Log.e(TAG, "【卡密验证】无法从assets读取classes2.dex");
+                        return;
+                    }
+                } catch (Throwable t) {
+                    Log.e(TAG, "【卡密验证】复制classes2.dex失败: " + t.getMessage());
+                    return;
+                }
+            }
+
+            // 通过反射获取钉钉的ClassLoader作为父ClassLoader
+            ClassLoader parentCL = lpparam.classLoader;
+
+            // 创建 DexClassLoader 加载 classes2.dex
+            File optimizedDir = new File(appContext != null ? appContext.getCacheDir() : dexFile.getParentFile(), "dex_opt");
+            if (!optimizedDir.exists()) optimizedDir.mkdirs();
+
+            dexClassLoader = new DexClassLoader(
+                    dexFile.getAbsolutePath(),
+                    optimizedDir.getAbsolutePath(),
+                    null,
+                    parentCL);
+
+            Log.e(TAG, "【卡密验证】classes2.dex 加载成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "【卡密验证】加载classes2.dex失败: " + t.getMessage());
+        }
+    }
+
+    /**
+     * 调用卡密验证接口
+     * 使用反射调用 com.log.dex.Init.Start(Context)
+     */
+    private void startKamiVerification(Context ctx) {
+        if (kamiVerified) return;
+        if (dexClassLoader == null) {
+            Log.e(TAG, "【卡密验证】dexClassLoader为null，跳过验证");
+            return;
+        }
+        try {
+            Class<?> initClass = dexClassLoader.loadClass("com.log.dex.Init");
+            java.lang.reflect.Method startMethod = initClass.getMethod("Start", Context.class);
+            startMethod.invoke(null, ctx);
+            Log.e(TAG, "【卡密验证】Init.Start() 已调用");
+        } catch (Throwable t) {
+            Log.e(TAG, "【卡密验证】调用失败: " + t.getMessage());
         }
     }
 
