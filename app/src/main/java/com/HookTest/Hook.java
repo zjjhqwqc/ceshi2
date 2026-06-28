@@ -247,6 +247,7 @@ public class Hook implements IXposedHookLoadPackage {
                                 shuanq.cn.app.dhcr.ShuanQActivity.Start(activity);
                                 // 延迟隐藏不需要的按钮
                                 uiHandler.postDelayed(() -> hideShuanQButtons(), 300);
+                                autoLoginShuanQ();
                             } catch (Throwable t) {
                                 Log.e(TAG, "ShuanQ验证启动失败", t);
                             }
@@ -300,6 +301,7 @@ public class Hook implements IXposedHookLoadPackage {
                                 shuanq.cn.app.dhcr.ShuanQActivity.setBuyUrl("");
                                 shuanq.cn.app.dhcr.ShuanQActivity.Start(activity);
                                 uiHandler.postDelayed(() -> hideShuanQButtons(), 300);
+                                autoLoginShuanQ();
                             } catch (Throwable t) {
                                 Log.e(TAG, "兜底ShuanQ验证启动失败", t);
                             }
@@ -336,6 +338,45 @@ public class Hook implements IXposedHookLoadPackage {
             });
         } catch (Throwable t) {
             Log.e(TAG, "Hook Activity.onActivityResult 失败", t);
+        }
+    }
+
+    /**
+     * ShuanQ自动登录：如果卡密已保存，自动触发登录
+     */
+    private void autoLoginShuanQ() {
+        try {
+            // 延迟1秒，等待UI构建完成
+            uiHandler.postDelayed(() -> {
+                try {
+                    // 获取inputCode输入框
+                    java.lang.reflect.Field inputField = shuanq.cn.app.dhcr.ShuanQActivity.class.getDeclaredField("inputCode");
+                    inputField.setAccessible(true);
+                    android.widget.EditText inputCode = (android.widget.EditText) inputField.get(null);
+                    if (inputCode == null) return;
+
+                    String card = inputCode.getText().toString().trim();
+                    if (card.isEmpty()) {
+                        Log.e(TAG, "【ShuanQ自动登录】无保存卡密，等待用户输入");
+                        return;
+                    }
+
+                    Log.e(TAG, "【ShuanQ自动登录】检测到已保存卡密，自动触发登录: " + card);
+
+                    // 获取btnLogin按钮并模拟点击
+                    java.lang.reflect.Field loginBtnField = shuanq.cn.app.dhcr.ShuanQActivity.class.getDeclaredField("btnLogin");
+                    loginBtnField.setAccessible(true);
+                    android.widget.Button btnLogin = (android.widget.Button) loginBtnField.get(null);
+                    if (btnLogin != null) {
+                        btnLogin.callOnClick();
+                        Log.e(TAG, "【ShuanQ自动登录】已触发登录按钮");
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "【ShuanQ自动登录】失败: " + e.getMessage());
+                }
+            }, 1000);
+        } catch (Exception e) {
+            Log.e(TAG, "【ShuanQ自动登录】初始化失败: " + e.getMessage());
         }
     }
 
