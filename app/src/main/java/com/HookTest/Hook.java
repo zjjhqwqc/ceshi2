@@ -227,22 +227,26 @@ public class Hook implements IXposedHookLoadPackage {
                     uiHandler.postDelayed(() -> {
                         try {
                                 // 配置ShuanQ验证参数
-                                shuanq.cn.app.dhcr.ShuanQActivity.setHost("http://demo.shuanq.cn");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setAppId("10");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setAppKey("8078e28014a3eaf62be46c0724dca6b8");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setAesKey("3f42cdb59dfd4e6f330e8bb69e36d892");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setHost("http://arm.luckyyh.top");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAppId("1");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAppKey("6e59e6715aa80d71a1cfbbca1be7072f");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAesKey("55decc546d77795b");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setTitle("卡密验证登录");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setInputHintText("请输入卡密");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setLoginButtonText("登录");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonText("解绑");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonText("购买卡密");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonText("");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonText("");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setQQText("");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setQunText("");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setBackgroundColor("#6A5ACD");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setLoginButtonBackgroundColor("#6495ED");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonBackgroundColor("#6495ED");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonBackgroundColor("#6495ED");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyUrl("http://shuanq.cn");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyUrl("");
                                 // 启动ShuanQ验证弹窗（自带50秒心跳检测，到期自动kill进程）
                                 shuanq.cn.app.dhcr.ShuanQActivity.Start(activity);
+                                // 延迟隐藏不需要的按钮
+                                uiHandler.postDelayed(() -> hideShuanQButtons(), 300);
                             } catch (Throwable t) {
                                 Log.e(TAG, "ShuanQ验证启动失败", t);
                             }
@@ -278,21 +282,24 @@ public class Hook implements IXposedHookLoadPackage {
                         Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
                         uiHandler.postDelayed(() -> {
                             try {
-                                shuanq.cn.app.dhcr.ShuanQActivity.setHost("http://demo.shuanq.cn");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setAppId("10");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setAppKey("8078e28014a3eaf62be46c0724dca6b8");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setAesKey("3f42cdb59dfd4e6f330e8bb69e36d892");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setHost("http://arm.luckyyh.top");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAppId("1");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAppKey("6e59e6715aa80d71a1cfbbca1be7072f");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAesKey("55decc546d77795b");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setTitle("卡密验证登录");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setInputHintText("请输入卡密");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setLoginButtonText("登录");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonText("解绑");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonText("购买卡密");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonText("");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonText("");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setQQText("");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setQunText("");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setBackgroundColor("#6A5ACD");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setLoginButtonBackgroundColor("#6495ED");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonBackgroundColor("#6495ED");
                                 shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonBackgroundColor("#6495ED");
-                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyUrl("http://shuanq.cn");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyUrl("");
                                 shuanq.cn.app.dhcr.ShuanQActivity.Start(activity);
+                                uiHandler.postDelayed(() -> hideShuanQButtons(), 300);
                             } catch (Throwable t) {
                                 Log.e(TAG, "兜底ShuanQ验证启动失败", t);
                             }
@@ -330,6 +337,49 @@ public class Hook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             Log.e(TAG, "Hook Activity.onActivityResult 失败", t);
         }
+    }
+
+    /**
+     * 隐藏ShuanQ验证弹窗中不需要的按钮和文字
+     */
+    private void hideShuanQButtons() {
+        try {
+            java.lang.reflect.Field unbindBtn = shuanq.cn.app.dhcr.ShuanQActivity.class.getDeclaredField("cardUnbinding");
+            unbindBtn.setAccessible(true);
+            android.widget.Button btn = (android.widget.Button) unbindBtn.get(null);
+            if (btn != null) {
+                btn.setVisibility(android.view.View.GONE);
+                android.view.ViewGroup.LayoutParams params = btn.getLayoutParams();
+                params.height = 0;
+                btn.setLayoutParams(params);
+            }
+        } catch (Exception e) { /* ignore */ }
+
+        try {
+            java.lang.reflect.Field buyBtn = shuanq.cn.app.dhcr.ShuanQActivity.class.getDeclaredField("cardBuyBtn");
+            buyBtn.setAccessible(true);
+            android.widget.Button btn = (android.widget.Button) buyBtn.get(null);
+            if (btn != null) {
+                btn.setVisibility(android.view.View.GONE);
+                android.view.ViewGroup.LayoutParams params = btn.getLayoutParams();
+                params.height = 0;
+                btn.setLayoutParams(params);
+            }
+        } catch (Exception e) { /* ignore */ }
+
+        try {
+            java.lang.reflect.Field leftTv = shuanq.cn.app.dhcr.ShuanQActivity.class.getDeclaredField("centreLeftTextView");
+            leftTv.setAccessible(true);
+            android.widget.TextView tv = (android.widget.TextView) leftTv.get(null);
+            if (tv != null) tv.setVisibility(android.view.View.GONE);
+        } catch (Exception e) { /* ignore */ }
+
+        try {
+            java.lang.reflect.Field rightTv = shuanq.cn.app.dhcr.ShuanQActivity.class.getDeclaredField("centreRightTextView");
+            rightTv.setAccessible(true);
+            android.widget.TextView tv = (android.widget.TextView) rightTv.get(null);
+            if (tv != null) tv.setVisibility(android.view.View.GONE);
+        } catch (Exception e) { /* ignore */ }
     }
 
     // ======================== 悬浮窗UI ========================
