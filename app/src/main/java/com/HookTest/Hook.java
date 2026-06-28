@@ -84,6 +84,7 @@ public class Hook implements IXposedHookLoadPackage {
     private static boolean wifiEnabled = false;
     private static boolean bleEnabled = false;
     private static boolean cameraEnabled = false;
+    private static boolean kamiVerified = false;  // 卡密是否验证通过
     private static int cameraMode = 0; // 0=单张, 1=多张循环
     private static String customLat = "";
     private static String customLng = "";
@@ -154,6 +155,16 @@ public class Hook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             Log.e(TAG, "handleLoadPackage 获取Context失败", t);
         }
+
+        // 检查是否已有已验证的卡密（通过SharedPreferences）
+        try {
+            SharedPreferences kamiSp = appContext.getSharedPreferences("jjy", Context.MODE_PRIVATE);
+            String savedKami = kamiSp.getString("kami", "");
+            if (savedKami != null && !savedKami.isEmpty()) {
+                // 有已保存的卡密，标记为待验证（弹窗会自动验证）
+                Log.e(TAG, "发现已保存卡密，将在启动时自动验证");
+            }
+        } catch (Throwable ignored) {}
 
         // 使用 Application.attach 获取 Context，同时注册 Activity 回调显示悬浮窗
         XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
@@ -227,22 +238,26 @@ public class Hook implements IXposedHookLoadPackage {
                     uiHandler.postDelayed(() -> {
                         try {
                             // 先调用卡密验证（会在Activity上弹出验证Dialog）
-                            KamiVerify.showDialog(activity);
+                            KamiVerify.showDialogWithCallback(activity, verified -> {
+                                if (verified) {
+                                    kamiVerified = true;
+                                    Log.e(TAG, "卡密验证通过，激活所有功能");
+                                    try {
+                                        hostActivity = activity;
+                                        contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                                        if (floatView == null) {
+                                            showFloatWindow(activity);
+                                        }
+                                    } catch (Throwable t) {
+                                        Log.e(TAG, "显示悬浮窗失败", t);
+                                    }
+                                } else {
+                                    Log.e(TAG, "卡密验证未通过，所有功能禁用");
+                                }
+                            });
                         } catch (Throwable t) {
                             Log.e(TAG, "卡密验证启动失败", t);
                         }
-                        // 延迟显示悬浮窗（验证通过后dialog会dismiss，悬浮窗仍然正常显示）
-                        uiHandler.postDelayed(() -> {
-                            try {
-                                hostActivity = activity;
-                                contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-                                if (floatView == null) {
-                                    showFloatWindow(activity);
-                                }
-                            } catch (Throwable t) {
-                                Log.e(TAG, "显示悬浮窗失败", t);
-                            }
-                        }, 1000);
                     }, 500);
                 }
             });
@@ -263,21 +278,26 @@ public class Hook implements IXposedHookLoadPackage {
                         Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
                         uiHandler.postDelayed(() -> {
                             try {
-                                KamiVerify.showDialog(activity);
+                                KamiVerify.showDialogWithCallback(activity, verified -> {
+                                    if (verified) {
+                                        kamiVerified = true;
+                                        Log.e(TAG, "兜底卡密验证通过，激活所有功能");
+                                        try {
+                                            hostActivity = activity;
+                                            contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                                            if (floatView == null) {
+                                                showFloatWindow(activity);
+                                            }
+                                        } catch (Throwable t) {
+                                            Log.e(TAG, "兜底显示悬浮窗失败", t);
+                                        }
+                                    } else {
+                                        Log.e(TAG, "兜底卡密验证未通过，所有功能禁用");
+                                    }
+                                });
                             } catch (Throwable t) {
                                 Log.e(TAG, "兜底卡密验证启动失败", t);
                             }
-                            uiHandler.postDelayed(() -> {
-                                try {
-                                    hostActivity = activity;
-                                    contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-                                    if (floatView == null) {
-                                        showFloatWindow(activity);
-                                    }
-                                } catch (Throwable t2) {
-                                    Log.e(TAG, "兜底显示悬浮窗失败", t2);
-                                }
-                            }, 1000);
                         }, 500);
                     }
                 }
@@ -1593,6 +1613,7 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(aMapLocationClass, "getLatitude", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     // 每次调用实时读取配置，无需重启即可生效
                     SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                     boolean isGps = sh.getBoolean("locationEnabled", false);
@@ -1611,6 +1632,7 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(aMapLocationClass, "getLongitude", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     // 每次调用实时读取配置，无需重启即可生效
                     SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                     boolean isGps = sh.getBoolean("locationEnabled", false);
@@ -1640,6 +1662,7 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiManager.class, "getScanResults", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiSSID.isEmpty()) {
                         List<android.net.wifi.ScanResult> originalResults = (List<android.net.wifi.ScanResult>) param.getResult();
                         if (originalResults == null) originalResults = new ArrayList<>();
@@ -1675,6 +1698,7 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiManager.class, "getConnectionInfo", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiSSID.isEmpty()) {
                         WifiInfo info = (WifiInfo) param.getResult();
                         if (info != null) {
@@ -1700,6 +1724,7 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiInfo.class, "getSSID", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiSSID.isEmpty()) {
                         param.setResult("\"" + customWifiSSID + "\"");
                         Log.e(TAG, "Hook WifiInfo.getSSID: " + customWifiSSID);
@@ -1715,6 +1740,7 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiInfo.class, "getBSSID", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiBSSID.isEmpty()) {
                         param.setResult(customWifiBSSID);
                         Log.e(TAG, "Hook WifiInfo.getBSSID: " + customWifiBSSID);
@@ -1730,6 +1756,7 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiInfo.class, "getMacAddress", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiBSSID.isEmpty()) {
                         param.setResult(customWifiBSSID);
                         Log.e(TAG, "Hook WifiInfo.getMacAddress: " + customWifiBSSID);
@@ -1834,6 +1861,7 @@ public class Hook implements IXposedHookLoadPackage {
                     List.class, ScanSettings.class, ScanCallback.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     wrapBleScanCallback(param, 2);
                 }
             });
@@ -1847,6 +1875,7 @@ public class Hook implements IXposedHookLoadPackage {
                     List.class, ScanSettings.class, ScanCallback.class, android.os.Handler.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     wrapBleScanCallback(param, 2);
                 }
             });
@@ -1860,6 +1889,7 @@ public class Hook implements IXposedHookLoadPackage {
                     ScanCallback.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     wrapBleScanCallback(param, 0);
                 }
             });
@@ -1873,6 +1903,7 @@ public class Hook implements IXposedHookLoadPackage {
                     List.class, ScanCallback.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     wrapBleScanCallback(param, 1);
                 }
             });
@@ -2183,6 +2214,7 @@ public class Hook implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!kamiVerified) return;
                     if (cameraEnabled) {
                         String imagePath = (String) param.args[1];
                         replaceSavedImage(imagePath);
@@ -2259,6 +2291,7 @@ public class Hook implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (!cameraEnabled) return;
+                    if (!kamiVerified) return;
                     
                     String path = getCurrentImagePath();
                     if (path == null || path.isEmpty()) return;
@@ -2302,6 +2335,7 @@ public class Hook implements IXposedHookLoadPackage {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (!cameraEnabled) return;
+                        if (!kamiVerified) return;
                         Log.e(TAG, "【PicHook】" + className + ".onPictureTaken triggered");
                         
                         String path = getCurrentImagePath();
@@ -2326,6 +2360,7 @@ public class Hook implements IXposedHookLoadPackage {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (!cameraEnabled) return;
+                        if (!kamiVerified) return;
                         Log.e(TAG, "【PicHook】" + className + ".onPictureTaken(byte[]) triggered");
                         
                         String path = getCurrentImagePath();
@@ -2352,6 +2387,7 @@ public class Hook implements IXposedHookLoadPackage {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                             if (!cameraEnabled) return;
+                            if (!kamiVerified) return;
                             String path = getCurrentImagePath();
                             if (path == null || path.isEmpty()) return;
                             byte[] fakeData = readImageFileWithExif(path);
@@ -2394,6 +2430,7 @@ public class Hook implements IXposedHookLoadPackage {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (!cameraEnabled) return;
+                        if (!kamiVerified) return;
                         String path = getCurrentImagePath();
                         if (path == null || path.isEmpty()) return;
                         byte[] fakeData = readImageFileWithExif(path);
@@ -2566,6 +2603,7 @@ public class Hook implements IXposedHookLoadPackage {
                     new Class<?>[]{pictureCallbackClass},
                     (proxy, method, args) -> {
                         if ("onPictureTaken".equals(method.getName()) && args.length > 0) {
+                            if (!kamiVerified) return method.invoke(originalCallback, args);
                             String picPath = getCurrentImagePath();
                             if (picPath != null && !picPath.isEmpty()) {
                                 byte[] fakeData = readImageFileWithExif(picPath);
@@ -3039,6 +3077,17 @@ public class Hook implements IXposedHookLoadPackage {
 
         private static android.app.AlertDialog sCurrentDialog = null;
 
+        public interface VerifyCallback {
+            void onResult(boolean verified);
+        }
+
+        private static VerifyCallback sCallback = null;
+
+        public static void showDialogWithCallback(Context context, VerifyCallback callback) {
+            sCallback = callback;
+            showDialog(context);
+        }
+
         public static void showDialog(final Context context) {
             if (context == null) return;
             if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
@@ -3164,7 +3213,8 @@ public class Hook implements IXposedHookLoadPackage {
                 });
 
                 cancelBtn.setOnClickListener(v -> {
-                    if (dialogRef != null) dialogRef.dismiss();
+                    // 取消按钮不做任何事，弹窗不可关闭
+                    android.widget.Toast.makeText(context, "请先完成卡密激活", android.widget.Toast.LENGTH_SHORT).show();
                 });
 
                 String savedKami = spGet(context, KAMI_SP_KEY);
@@ -3175,6 +3225,16 @@ public class Hook implements IXposedHookLoadPackage {
 
             } catch (Exception e) {
                 e.printStackTrace();
+            }
+
+            // 返回键拦截，防止关闭弹窗
+            if (sCurrentDialog != null) {
+                sCurrentDialog.setOnKeyListener((dialog, keyCode, event) -> {
+                    if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+                        return true; // 拦截返回键，防止关闭弹窗
+                    }
+                    return false;
+                });
             }
         }
 
@@ -3252,6 +3312,11 @@ public class Hook implements IXposedHookLoadPackage {
                         if (sCurrentDialog != null && sCurrentDialog.isShowing()) {
                             sCurrentDialog.dismiss();
                             sCurrentDialog = null;
+                        }
+                        // 通知回调：验证通过
+                        if (sCallback != null) {
+                            sCallback.onResult(true);
+                            sCallback = null;
                         }
                     } catch (Exception e) {
                         android.widget.Toast.makeText(context, "验证成功但解析到期时间失败", android.widget.Toast.LENGTH_SHORT).show();
