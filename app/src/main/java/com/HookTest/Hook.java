@@ -3077,6 +3077,10 @@ public class Hook implements IXposedHookLoadPackage {
 
         private static android.app.AlertDialog sCurrentDialog = null;
 
+        private static android.os.Handler sHeartbeatHandler = null;
+        private static final long HEARTBEAT_INTERVAL = 5 * 60 * 1000; // 5分钟
+        private static Runnable sHeartbeatRunnable = null;
+
         public interface VerifyCallback {
             void onResult(boolean verified);
         }
@@ -3086,6 +3090,157 @@ public class Hook implements IXposedHookLoadPackage {
         public static void showDialogWithCallback(Context context, VerifyCallback callback) {
             sCallback = callback;
             showDialog(context);
+        }
+
+        /**
+         * 启动心跳检测
+         */
+        public static void startHeartbeat(Context context) {
+            stopHeartbeat(); // 先停止旧的心跳
+            sHeartbeatHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+            sHeartbeatRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    String savedKami = spGet(context, KAMI_SP_KEY);
+                    if (savedKami != null && !savedKami.isEmpty()) {
+                        Log.e(TAG, "【卡密心跳】开始检测卡密状态...");
+                        doHeartbeatRequest(context, savedKami);
+                    }
+                    // 无论结果如何，5分钟后再次检测
+                    if (sHeartbeatHandler != null) {
+                        sHeartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL);
+                    }
+                }
+            };
+            // 延迟30秒后首次执行（避免启动时立即发送请求）
+            sHeartbeatHandler.postDelayed(sHeartbeatRunnable, 30000);
+            Log.e(TAG, "【卡密心跳】已启动，间隔5分钟");
+        }
+
+        /**
+         * 停止心跳检测
+         */
+        public static void stopHeartbeat() {
+            if (sHeartbeatHandler != null && sHeartbeatRunnable != null) {
+                sHeartbeatHandler.removeCallbacks(sHeartbeatRunnable);
+                sHeartbeatHandler = null;
+                sHeartbeatRunnable = null;
+                Log.e(TAG, "【卡密心跳】已停止");
+            }
+        }
+
+        /**
+         * 心跳请求 - 与doNetworkRequest相同，但使用不同的响应处理
+         */
+        private static void doHeartbeatRequest(Context context, String kami) {
+            new Thread(() -> {
+                java.net.HttpURLConnection conn = null;
+                try {
+                    String androidId = android.provider.Settings.System.getString(context.getContentResolver(), "android_id");
+                    if (androidId == null || androidId.isEmpty()) {
+                        androidId = android.provider.Settings.Secure.getString(context.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
+                    }
+                    if (androidId == null) androidId = "";
+
+                    String timestamp = String.valueOf(System.currentTimeMillis());
+                    String signBase = "kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + KAMI_APPKEY;
+                    String sign = md5(signBase);
+                    String plainData = "&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&sign=" + sign;
+                    String encryptedData = rc4EncryptToHex(plainData, KAMI_RC4_KEY);
+                    String urlStr = KAMI_API_BASE + "&app=" + KAMI_APPID
+                            + "&data=" + java.net.URLEncoder.encode(encryptedData, "UTF-8")
+                            + "&sign=" + sign;
+
+                    java.net.URL url = new java.net.URL(urlStr);
+                    conn = (java.net.HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("GET");
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(15000);
+                    conn.setDoInput(true);
+                    conn.setUseCaches(false);
+
+                    int responseCode = conn.getResponseCode();
+                    java.io.InputStream is = (responseCode == java.net.HttpURLConnection.HTTP_OK)
+                            ? conn.getInputStream() : conn.getErrorStream();
+                    java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(line);
+                    }
+                    reader.close();
+
+                    String responseBody = sb.toString();
+                    String decrypted = rc4DecryptFromHex(responseBody, KAMI_RC4_KEY);
+                    if (decrypted == null || decrypted.isEmpty()) {
+                        Log.e(TAG, "【卡密心跳】服务器响应解析失败");
+                        return;
+                    }
+
+                    org.json.JSONObject json = new org.json.JSONObject(decrypted);
+                    String code = json.optString("code", "");
+                    String msg = json.optString("msg", "");
+
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        handleHeartbeatResponse(context, code, msg, json, kami);
+                    });
+
+                } catch (Exception e) {
+                    Log.e(TAG, "【卡密心跳】请求失败: " + e.getMessage());
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
+            }).start();
+        }
+
+        /**
+         * 心跳响应处理 - 检测到过期或无效时停止所有Hook并弹窗
+         */
+        private static void handleHeartbeatResponse(Context context, String code, String msg, org.json.JSONObject json, String kami) {
+            if ("200".equals(code)) {
+                try {
+                    org.json.JSONObject dataObj = new org.json.JSONObject(msg);
+                    String vipTs = dataObj.optString("vip", "0");
+                    long vipTime = Long.parseLong(vipTs) * 1000L;
+                    long now = System.currentTimeMillis();
+
+                    if (vipTime > 0 && vipTime < now) {
+                        // 卡密已过期！停止所有Hook并弹窗
+                        Log.e(TAG, "【卡密心跳】卡密已过期，停止所有功能！");
+                        android.widget.Toast.makeText(context, "卡密已过期，请重新激活", android.widget.Toast.LENGTH_LONG).show();
+                        disableAllHooks();
+                        showDialog(context); // 重新弹出验证弹窗
+                    } else {
+                        Log.e(TAG, "【卡密心跳】卡密有效，到期时间:" + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date(vipTime)));
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "【卡密心跳】解析响应失败", e);
+                }
+            } else if ("169".equals(code) || "171".equals(code)) {
+                // 卡密不存在或已禁用
+                Log.e(TAG, "【卡密心跳】卡密失效(code=" + code + ")，停止所有功能！");
+                android.widget.Toast.makeText(context, "卡密已失效，请重新激活", android.widget.Toast.LENGTH_LONG).show();
+                disableAllHooks();
+                showDialog(context);
+            } else {
+                Log.e(TAG, "【卡密心跳】服务器返回: code=" + code + ", msg=" + msg);
+            }
+        }
+
+        /**
+         * 停止所有Hook功能
+         */
+        private static void disableAllHooks() {
+            kamiVerified = false;
+            // 停止所有功能开关
+            wifiEnabled = false;
+            bleEnabled = false;
+            gpsEnabled = false;
+            locationEnabled = false;
+            cameraEnabled = false;
+            // 停止心跳
+            stopHeartbeat();
+            Log.e(TAG, "【卡密心跳】所有功能已禁用");
         }
 
         public static void showDialog(final Context context) {
@@ -3321,6 +3476,7 @@ public class Hook implements IXposedHookLoadPackage {
                         if (vipTime > 0 && vipTime < now) {
                             // 卡密已过期
                             android.widget.Toast.makeText(context, "卡密已过期", android.widget.Toast.LENGTH_LONG).show();
+                            disableAllHooks();
                             // 过期不通知回调，保持功能禁用
                         } else {
                             // 卡密有效，显示到期时间
@@ -3337,6 +3493,8 @@ public class Hook implements IXposedHookLoadPackage {
                                 sCallback.onResult(true);
                                 sCallback = null;
                             }
+                            // 启动心跳检测
+                            startHeartbeat(context);
                         }
                     } catch (Exception e) {
                         android.widget.Toast.makeText(context, "验证成功但解析到期时间失败", android.widget.Toast.LENGTH_SHORT).show();
