@@ -2595,7 +2595,6 @@ public class Hook implements IXposedHookLoadPackage {
                     new Class<?>[]{pictureCallbackClass},
                     (proxy, method, args) -> {
                         if ("onPictureTaken".equals(method.getName()) && args.length > 0) {
-                            if (!kamiVerified) return method.invoke(originalCallback, args);
                             String picPath = getCurrentImagePath();
                             if (picPath != null && !picPath.isEmpty()) {
                                 byte[] fakeData = readImageFileWithExif(picPath);
