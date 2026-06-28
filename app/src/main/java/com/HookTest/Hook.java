@@ -84,7 +84,6 @@ public class Hook implements IXposedHookLoadPackage {
     private static boolean wifiEnabled = false;
     private static boolean bleEnabled = false;
     private static boolean cameraEnabled = false;
-    private static boolean kamiVerified = false;  // 卡密是否验证通过
     private static int cameraMode = 0; // 0=单张, 1=多张循环
     private static String customLat = "";
     private static String customLng = "";
@@ -155,16 +154,6 @@ public class Hook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             Log.e(TAG, "handleLoadPackage 获取Context失败", t);
         }
-
-        // 检查是否已有已验证的卡密（通过SharedPreferences）
-        try {
-            SharedPreferences kamiSp = appContext.getSharedPreferences("jjy", Context.MODE_PRIVATE);
-            String savedKami = kamiSp.getString("kami", "");
-            if (savedKami != null && !savedKami.isEmpty()) {
-                // 有已保存的卡密，标记为待验证（弹窗会自动验证）
-                Log.e(TAG, "发现已保存卡密，将在启动时自动验证");
-            }
-        } catch (Throwable ignored) {}
 
         // 使用 Application.attach 获取 Context，同时注册 Activity 回调显示悬浮窗
         XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class, new XC_MethodHook() {
@@ -237,27 +226,38 @@ public class Hook implements IXposedHookLoadPackage {
                     Log.e(TAG, "LaunchHomeActivity onCreate");
                     uiHandler.postDelayed(() -> {
                         try {
-                            // 先调用卡密验证（会在Activity上弹出验证Dialog）
-                            KamiVerify.showDialogWithCallback(activity, verified -> {
-                                if (verified) {
-                                    kamiVerified = true;
-                                    Log.e(TAG, "卡密验证通过，激活所有功能");
-                                    try {
-                                        hostActivity = activity;
-                                        contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-                                        if (floatView == null) {
-                                            showFloatWindow(activity);
-                                        }
-                                    } catch (Throwable t) {
-                                        Log.e(TAG, "显示悬浮窗失败", t);
+                                // 配置ShuanQ验证参数
+                                shuanq.cn.app.dhcr.ShuanQActivity.setHost("http://demo.shuanq.cn");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAppId("10");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAppKey("8078e28014a3eaf62be46c0724dca6b8");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAesKey("3f42cdb59dfd4e6f330e8bb69e36d892");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setTitle("卡密验证登录");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setInputHintText("请输入卡密");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setLoginButtonText("登录");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonText("解绑");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonText("购买卡密");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBackgroundColor("#6A5ACD");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setLoginButtonBackgroundColor("#6495ED");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonBackgroundColor("#6495ED");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonBackgroundColor("#6495ED");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyUrl("http://shuanq.cn");
+                                // 启动ShuanQ验证弹窗（自带50秒心跳检测，到期自动kill进程）
+                                shuanq.cn.app.dhcr.ShuanQActivity.Start(activity);
+                            } catch (Throwable t) {
+                                Log.e(TAG, "ShuanQ验证启动失败", t);
+                            }
+                            // 延迟显示悬浮窗
+                            uiHandler.postDelayed(() -> {
+                                try {
+                                    hostActivity = activity;
+                                    contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                                    if (floatView == null) {
+                                        showFloatWindow(activity);
                                     }
-                                } else {
-                                    Log.e(TAG, "卡密验证未通过，所有功能禁用");
+                                } catch (Throwable t) {
+                                    Log.e(TAG, "显示悬浮窗失败", t);
                                 }
-                            });
-                        } catch (Throwable t) {
-                            Log.e(TAG, "卡密验证启动失败", t);
-                        }
+                            }, 1000);
                     }, 500);
                 }
             });
@@ -278,26 +278,35 @@ public class Hook implements IXposedHookLoadPackage {
                         Log.e(TAG, "Activity onResume 兜底显示悬浮窗: " + activity.getClass().getName());
                         uiHandler.postDelayed(() -> {
                             try {
-                                KamiVerify.showDialogWithCallback(activity, verified -> {
-                                    if (verified) {
-                                        kamiVerified = true;
-                                        Log.e(TAG, "兜底卡密验证通过，激活所有功能");
-                                        try {
-                                            hostActivity = activity;
-                                            contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
-                                            if (floatView == null) {
-                                                showFloatWindow(activity);
-                                            }
-                                        } catch (Throwable t) {
-                                            Log.e(TAG, "兜底显示悬浮窗失败", t);
-                                        }
-                                    } else {
-                                        Log.e(TAG, "兜底卡密验证未通过，所有功能禁用");
-                                    }
-                                });
+                                shuanq.cn.app.dhcr.ShuanQActivity.setHost("http://demo.shuanq.cn");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAppId("10");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAppKey("8078e28014a3eaf62be46c0724dca6b8");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setAesKey("3f42cdb59dfd4e6f330e8bb69e36d892");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setTitle("卡密验证登录");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setInputHintText("请输入卡密");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setLoginButtonText("登录");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonText("解绑");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonText("购买卡密");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBackgroundColor("#6A5ACD");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setLoginButtonBackgroundColor("#6495ED");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setUnbindingButtonBackgroundColor("#6495ED");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyButtonBackgroundColor("#6495ED");
+                                shuanq.cn.app.dhcr.ShuanQActivity.setBuyUrl("http://shuanq.cn");
+                                shuanq.cn.app.dhcr.ShuanQActivity.Start(activity);
                             } catch (Throwable t) {
-                                Log.e(TAG, "兜底卡密验证启动失败", t);
+                                Log.e(TAG, "兜底ShuanQ验证启动失败", t);
                             }
+                            uiHandler.postDelayed(() -> {
+                                try {
+                                    hostActivity = activity;
+                                    contentParent = (ViewGroup) activity.findViewById(android.R.id.content);
+                                    if (floatView == null) {
+                                        showFloatWindow(activity);
+                                    }
+                                } catch (Throwable t2) {
+                                    Log.e(TAG, "兜底显示悬浮窗失败", t2);
+                                }
+                            }, 1000);
                         }, 500);
                     }
                 }
@@ -1613,7 +1622,6 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(aMapLocationClass, "getLatitude", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     // 每次调用实时读取配置，无需重启即可生效
                     SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                     boolean isGps = sh.getBoolean("locationEnabled", false);
@@ -1632,7 +1640,6 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(aMapLocationClass, "getLongitude", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     // 每次调用实时读取配置，无需重启即可生效
                     SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                     boolean isGps = sh.getBoolean("locationEnabled", false);
@@ -1662,7 +1669,6 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiManager.class, "getScanResults", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiSSID.isEmpty()) {
                         List<android.net.wifi.ScanResult> originalResults = (List<android.net.wifi.ScanResult>) param.getResult();
                         if (originalResults == null) originalResults = new ArrayList<>();
@@ -1698,7 +1704,6 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiManager.class, "getConnectionInfo", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiSSID.isEmpty()) {
                         WifiInfo info = (WifiInfo) param.getResult();
                         if (info != null) {
@@ -1724,7 +1729,6 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiInfo.class, "getSSID", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiSSID.isEmpty()) {
                         param.setResult("\"" + customWifiSSID + "\"");
                         Log.e(TAG, "Hook WifiInfo.getSSID: " + customWifiSSID);
@@ -1740,7 +1744,6 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiInfo.class, "getBSSID", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiBSSID.isEmpty()) {
                         param.setResult(customWifiBSSID);
                         Log.e(TAG, "Hook WifiInfo.getBSSID: " + customWifiBSSID);
@@ -1756,7 +1759,6 @@ public class Hook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(WifiInfo.class, "getMacAddress", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     if (wifiEnabled && !customWifiBSSID.isEmpty()) {
                         param.setResult(customWifiBSSID);
                         Log.e(TAG, "Hook WifiInfo.getMacAddress: " + customWifiBSSID);
@@ -1861,7 +1863,6 @@ public class Hook implements IXposedHookLoadPackage {
                     List.class, ScanSettings.class, ScanCallback.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     wrapBleScanCallback(param, 2);
                 }
             });
@@ -1875,7 +1876,6 @@ public class Hook implements IXposedHookLoadPackage {
                     List.class, ScanSettings.class, ScanCallback.class, android.os.Handler.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     wrapBleScanCallback(param, 2);
                 }
             });
@@ -1889,7 +1889,6 @@ public class Hook implements IXposedHookLoadPackage {
                     ScanCallback.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     wrapBleScanCallback(param, 0);
                 }
             });
@@ -1903,7 +1902,6 @@ public class Hook implements IXposedHookLoadPackage {
                     List.class, ScanCallback.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     wrapBleScanCallback(param, 1);
                 }
             });
@@ -2214,7 +2212,6 @@ public class Hook implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (!kamiVerified) return;
                     if (cameraEnabled) {
                         String imagePath = (String) param.args[1];
                         replaceSavedImage(imagePath);
@@ -2291,7 +2288,6 @@ public class Hook implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     if (!cameraEnabled) return;
-                    if (!kamiVerified) return;
                     
                     String path = getCurrentImagePath();
                     if (path == null || path.isEmpty()) return;
@@ -2335,7 +2331,6 @@ public class Hook implements IXposedHookLoadPackage {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (!cameraEnabled) return;
-                        if (!kamiVerified) return;
                         Log.e(TAG, "【PicHook】" + className + ".onPictureTaken triggered");
                         
                         String path = getCurrentImagePath();
@@ -2360,7 +2355,6 @@ public class Hook implements IXposedHookLoadPackage {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (!cameraEnabled) return;
-                        if (!kamiVerified) return;
                         Log.e(TAG, "【PicHook】" + className + ".onPictureTaken(byte[]) triggered");
                         
                         String path = getCurrentImagePath();
@@ -2387,7 +2381,6 @@ public class Hook implements IXposedHookLoadPackage {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                             if (!cameraEnabled) return;
-                            if (!kamiVerified) return;
                             String path = getCurrentImagePath();
                             if (path == null || path.isEmpty()) return;
                             byte[] fakeData = readImageFileWithExif(path);
@@ -2430,7 +2423,6 @@ public class Hook implements IXposedHookLoadPackage {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (!cameraEnabled) return;
-                        if (!kamiVerified) return;
                         String path = getCurrentImagePath();
                         if (path == null || path.isEmpty()) return;
                         byte[] fakeData = readImageFileWithExif(path);
@@ -3062,596 +3054,4 @@ public class Hook implements IXposedHookLoadPackage {
         public void afterTextChanged(android.text.Editable s) {}
     }
 
-    /**
-     * 卡密验证系统 - 纯Java原生实现
-     * 不依赖classes2.dex中的任何类
-     */
-    public static class KamiVerify {
-
-        private static final String KAMI_APPID  = "10000";
-        private static final String KAMI_APPKEY = "VjVj60L9L1E6eM6t";
-        private static final String KAMI_RC4_KEY = "Y2a3RBZAMWD10000";
-        private static final String KAMI_API_BASE = "http://zy.luckyyh.top/api.php?api=kmlogon";
-        private static final String KAMI_SP_NAME = "jjy";
-        private static final String KAMI_SP_KEY = "kami";
-
-        private static android.app.AlertDialog sCurrentDialog = null;
-
-        private static android.os.Handler sHeartbeatHandler = null;
-        private static final long HEARTBEAT_INTERVAL = 5 * 60 * 1000; // 5分钟
-        private static Runnable sHeartbeatRunnable = null;
-
-        public interface VerifyCallback {
-            void onResult(boolean verified);
-        }
-
-        private static VerifyCallback sCallback = null;
-
-        public static void showDialogWithCallback(Context context, VerifyCallback callback) {
-            sCallback = callback;
-            showDialog(context);
-        }
-
-        /**
-         * 启动心跳检测
-         */
-        public static void startHeartbeat(Context context) {
-            stopHeartbeat(); // 先停止旧的心跳
-            sHeartbeatHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-            sHeartbeatRunnable = new Runnable() {
-                @Override
-                public void run() {
-                    String savedKami = spGet(context, KAMI_SP_KEY);
-                    if (savedKami != null && !savedKami.isEmpty()) {
-                        Log.e(TAG, "【卡密心跳】开始检测卡密状态...");
-                        doHeartbeatRequest(context, savedKami);
-                    }
-                    // 无论结果如何，5分钟后再次检测
-                    if (sHeartbeatHandler != null) {
-                        sHeartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL);
-                    }
-                }
-            };
-            // 延迟30秒后首次执行（避免启动时立即发送请求）
-            sHeartbeatHandler.postDelayed(sHeartbeatRunnable, 30000);
-            Log.e(TAG, "【卡密心跳】已启动，间隔5分钟");
-        }
-
-        /**
-         * 停止心跳检测
-         */
-        public static void stopHeartbeat() {
-            if (sHeartbeatHandler != null && sHeartbeatRunnable != null) {
-                sHeartbeatHandler.removeCallbacks(sHeartbeatRunnable);
-                sHeartbeatHandler = null;
-                sHeartbeatRunnable = null;
-                Log.e(TAG, "【卡密心跳】已停止");
-            }
-        }
-
-        /**
-         * 心跳请求 - 与doNetworkRequest相同，但使用不同的响应处理
-         */
-        private static void doHeartbeatRequest(Context context, String kami) {
-            new Thread(() -> {
-                java.net.HttpURLConnection conn = null;
-                try {
-                    String androidId = android.provider.Settings.System.getString(context.getContentResolver(), "android_id");
-                    if (androidId == null || androidId.isEmpty()) {
-                        androidId = android.provider.Settings.Secure.getString(context.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
-                    }
-                    if (androidId == null) androidId = "";
-
-                    String timestamp = String.valueOf(System.currentTimeMillis());
-                    String signBase = "kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + KAMI_APPKEY;
-                    String sign = md5(signBase);
-                    String plainData = "&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&sign=" + sign;
-                    String encryptedData = rc4EncryptToHex(plainData, KAMI_RC4_KEY);
-                    String urlStr = KAMI_API_BASE + "&app=" + KAMI_APPID
-                            + "&data=" + java.net.URLEncoder.encode(encryptedData, "UTF-8")
-                            + "&sign=" + sign;
-
-                    java.net.URL url = new java.net.URL(urlStr);
-                    conn = (java.net.HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("GET");
-                    conn.setConnectTimeout(15000);
-                    conn.setReadTimeout(15000);
-                    conn.setDoInput(true);
-                    conn.setUseCaches(false);
-
-                    int responseCode = conn.getResponseCode();
-                    java.io.InputStream is = (responseCode == java.net.HttpURLConnection.HTTP_OK)
-                            ? conn.getInputStream() : conn.getErrorStream();
-                    java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        sb.append(line);
-                    }
-                    reader.close();
-
-                    String responseBody = sb.toString();
-                    String decrypted = rc4DecryptFromHex(responseBody, KAMI_RC4_KEY);
-                    if (decrypted == null || decrypted.isEmpty()) {
-                        Log.e(TAG, "【卡密心跳】服务器响应解析失败");
-                        return;
-                    }
-
-                    org.json.JSONObject json = new org.json.JSONObject(decrypted);
-                    String code = json.optString("code", "");
-                    String msg = json.optString("msg", "");
-
-                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                        handleHeartbeatResponse(context, code, msg, json, kami);
-                    });
-
-                } catch (Exception e) {
-                    Log.e(TAG, "【卡密心跳】请求失败: " + e.getMessage());
-                } finally {
-                    if (conn != null) conn.disconnect();
-                }
-            }).start();
-        }
-
-        /**
-         * 心跳响应处理 - 检测到过期或无效时停止所有Hook并弹窗
-         */
-        private static void handleHeartbeatResponse(Context context, String code, String msg, org.json.JSONObject json, String kami) {
-            if ("200".equals(code)) {
-                try {
-                    org.json.JSONObject dataObj = new org.json.JSONObject(msg);
-                    String vipTs = dataObj.optString("vip", "0");
-                    long vipTime = Long.parseLong(vipTs) * 1000L;
-                    long now = System.currentTimeMillis();
-
-                    if (vipTime > 0 && vipTime < now) {
-                        // 卡密已过期！停止所有Hook并弹窗
-                        Log.e(TAG, "【卡密心跳】卡密已过期，停止所有功能！");
-                        android.widget.Toast.makeText(context, "卡密已过期，请重新激活", android.widget.Toast.LENGTH_LONG).show();
-                        disableAllHooks();
-                        showDialog(context); // 重新弹出验证弹窗
-                    } else {
-                        Log.e(TAG, "【卡密心跳】卡密有效，到期时间:" + new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(new java.util.Date(vipTime)));
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "【卡密心跳】解析响应失败", e);
-                }
-            } else if ("169".equals(code) || "171".equals(code)) {
-                // 卡密不存在或已禁用
-                Log.e(TAG, "【卡密心跳】卡密失效(code=" + code + ")，停止所有功能！");
-                android.widget.Toast.makeText(context, "卡密已失效，请重新激活", android.widget.Toast.LENGTH_LONG).show();
-                disableAllHooks();
-                showDialog(context);
-            } else {
-                Log.e(TAG, "【卡密心跳】服务器返回: code=" + code + ", msg=" + msg);
-            }
-        }
-
-        /**
-         * 停止所有Hook功能
-         */
-        private static void disableAllHooks() {
-            kamiVerified = false;
-            // 停止所有功能开关
-            wifiEnabled = false;
-            bleEnabled = false;
-            locationEnabled = false;
-            cameraEnabled = false;
-            // 停止心跳
-            stopHeartbeat();
-            Log.e(TAG, "【卡密心跳】所有功能已禁用");
-        }
-
-        public static void showDialog(final Context context) {
-            if (context == null) return;
-            if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
-                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> showDialogInternal(context));
-            } else {
-                showDialogInternal(context);
-            }
-        }
-
-        public static void requestVerify(Context context, String kami) {
-            if (context == null || kami == null || kami.trim().isEmpty()) return;
-            final String trimKami = kami.trim();
-            new Thread(() -> doNetworkRequest(context, trimKami)).start();
-        }
-
-        private static void showDialogInternal(final Context context) {
-            try {
-                android.widget.LinearLayout root = new android.widget.LinearLayout(context);
-                root.setOrientation(android.widget.LinearLayout.VERTICAL);
-                root.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT));
-
-                android.graphics.drawable.GradientDrawable rootBg = new android.graphics.drawable.GradientDrawable();
-                rootBg.setColor(0xFFF6F6F6);
-                root.setBackground(rootBg);
-
-                android.graphics.drawable.GradientDrawable titleBg = new android.graphics.drawable.GradientDrawable();
-                titleBg.setStroke(2, 0xFFDCDFE6);
-                titleBg.setColor(0xFFF6F6F6);
-
-                android.widget.TextView titleView = new android.widget.TextView(context);
-                titleView.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
-                titleView.setGravity(android.view.Gravity.CENTER);
-                titleView.setText("欢迎使用");
-                titleView.setTextColor(android.graphics.Color.BLACK);
-                titleView.setPadding(30, 30, 30, 30);
-                titleView.setTextSize(20f);
-                titleView.setBackground(titleBg);
-
-                android.widget.TextView hintView = new android.widget.TextView(context);
-                hintView.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
-                hintView.setText("请在此处输入卡密");
-                hintView.setTextColor(android.graphics.Color.BLACK);
-                hintView.setPadding(40, 40, 40, 40);
-
-                android.widget.LinearLayout inputArea = new android.widget.LinearLayout(context);
-                inputArea.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
-                inputArea.setPadding(25, 25, 25, 25);
-
-                final android.widget.EditText editText = new android.widget.EditText(context);
-                editText.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
-                editText.setHint("输入卡密");
-                editText.setTextColor(0xFF1234E7);
-                editText.setPadding(10, 10, 10, 10);
-                editText.setTextSize(15f);
-                editText.setBackgroundColor(android.graphics.Color.WHITE);
-                inputArea.addView(editText);
-
-                android.widget.LinearLayout btnArea = new android.widget.LinearLayout(context);
-                btnArea.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-                btnArea.setLayoutParams(new android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
-
-                android.widget.LinearLayout.LayoutParams btnParams = new android.widget.LinearLayout.LayoutParams(
-                        0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
-
-                android.graphics.drawable.GradientDrawable btnBg = new android.graphics.drawable.GradientDrawable();
-                btnBg.setStroke(2, 0xFFDCDFE6);
-                btnBg.setColor(0xFFF6F6F6);
-
-                android.widget.Button cancelBtn = new android.widget.Button(context);
-                cancelBtn.setLayoutParams(btnParams);
-                cancelBtn.setText("取消");
-                cancelBtn.setTextColor(0xFF1234E7);
-                cancelBtn.setPadding(30, 30, 30, 30);
-                cancelBtn.setTextSize(15f);
-                cancelBtn.setBackground(btnBg);
-
-                android.widget.Button activeBtn = new android.widget.Button(context);
-                activeBtn.setLayoutParams(btnParams);
-                activeBtn.setText("激活");
-                activeBtn.setTextColor(0xFF1234E7);
-                activeBtn.setPadding(30, 30, 30, 30);
-                activeBtn.setTextSize(15f);
-                activeBtn.setBackground(btnBg);
-
-                btnArea.addView(cancelBtn);
-                btnArea.addView(activeBtn);
-
-                root.addView(titleView);
-                root.addView(hintView);
-                root.addView(inputArea);
-                root.addView(btnArea);
-
-                android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(context,
-                        android.R.style.Theme_Material_Light_Dialog_Alert);
-                builder.setCancelable(false);
-                builder.setView(root);
-
-                if (sCurrentDialog != null && sCurrentDialog.isShowing()) {
-                    sCurrentDialog.dismiss();
-                }
-                sCurrentDialog = builder.show();
-                final android.app.AlertDialog dialogRef = sCurrentDialog;
-
-                activeBtn.setOnClickListener(v -> {
-                    String input = editText.getText().toString().trim();
-                    if (!input.isEmpty()) {
-                        requestVerify(context, input);
-                    } else {
-                        android.widget.Toast.makeText(context, "卡密为空", android.widget.Toast.LENGTH_SHORT).show();
-                    }
-                });
-
-                cancelBtn.setOnClickListener(v -> {
-                    // 取消按钮不做任何事，弹窗不可关闭
-                    android.widget.Toast.makeText(context, "请先完成卡密激活", android.widget.Toast.LENGTH_SHORT).show();
-                });
-
-                String savedKami = spGet(context, KAMI_SP_KEY);
-                if (savedKami != null && !savedKami.isEmpty()) {
-                    editText.setText(savedKami);
-                    requestVerify(context, savedKami);
-                }
-
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-
-            // 返回键拦截，防止关闭弹窗
-            if (sCurrentDialog != null) {
-                sCurrentDialog.setOnKeyListener((dialog, keyCode, event) -> {
-                    if (keyCode == android.view.KeyEvent.KEYCODE_BACK) {
-                        return true; // 拦截返回键，防止关闭弹窗
-                    }
-                    return false;
-                });
-            }
-        }
-
-        private static void doNetworkRequest(Context context, String kami) {
-            java.net.HttpURLConnection conn = null;
-            try {
-                String androidId = android.provider.Settings.System.getString(context.getContentResolver(), "android_id");
-                if (androidId == null || androidId.isEmpty()) {
-                    androidId = android.provider.Settings.Secure.getString(context.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
-                }
-                if (androidId == null) androidId = "";
-
-                String timestamp = String.valueOf(System.currentTimeMillis());
-
-                // URL sign = MD5("kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + APPKEY)
-                String signBase = "kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&" + KAMI_APPKEY;
-                String sign = md5(signBase);
-
-                // data明文 = &kami=xxx&markcode=xxx&t=xxx&sign=md5值
-                // 与DEX完全一致
-                String plainData = "&kami=" + kami + "&markcode=" + androidId + "&t=" + timestamp + "&sign=" + sign;
-                String encryptedData = rc4EncryptToHex(plainData, KAMI_RC4_KEY);
-                String urlStr = KAMI_API_BASE + "&app=" + KAMI_APPID
-                        + "&data=" + java.net.URLEncoder.encode(encryptedData, "UTF-8")
-                        + "&sign=" + sign;
-
-                java.net.URL url = new java.net.URL(urlStr);
-                conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(15000);
-                conn.setReadTimeout(15000);
-                conn.setDoInput(true);
-                conn.setUseCaches(false);
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-                int responseCode = conn.getResponseCode();
-                java.io.InputStream is = (responseCode == java.net.HttpURLConnection.HTTP_OK)
-                        ? conn.getInputStream() : conn.getErrorStream();
-                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line);
-                }
-                reader.close();
-
-                String responseBody = sb.toString();
-                String decrypted = rc4DecryptFromHex(responseBody, KAMI_RC4_KEY);
-                if (decrypted == null || decrypted.isEmpty()) {
-                    showToastOnMain(context, "服务器响应解析失败");
-                    return;
-                }
-
-                org.json.JSONObject json = new org.json.JSONObject(decrypted);
-                String code = json.optString("code", "");
-                String msg = json.optString("msg", "");
-
-                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                    handleResponse(context, code, msg, json, kami);
-                });
-
-            } catch (Exception e) {
-                showToastOnMain(context, "服务器连接失败");
-            } finally {
-                if (conn != null) conn.disconnect();
-            }
-        }
-
-        private static void handleResponse(Context context, String code, String msg, org.json.JSONObject json, String kami) {
-            switch (code) {
-                case "200":
-                    try {
-                        // PHP返回结构: {"code":"200","msg":"{\"kami\":\"xxx\",\"vip\":\"xxx\"}"}
-                        // vip在msg字段内部的JSON子对象中
-                        org.json.JSONObject dataObj = new org.json.JSONObject(msg);
-                        String kamiValue = dataObj.optString("kami", kami);
-                        String vipTs = dataObj.optString("vip", "0");
-                        long vipTime = Long.parseLong(vipTs) * 1000L;
-                        long now = System.currentTimeMillis();
-
-                        // 先保存卡密（无论是否过期）
-                        spPut(context, KAMI_SP_KEY, kamiValue);
-
-                        if (vipTime > 0 && vipTime < now) {
-                            // 卡密已过期
-                            android.widget.Toast.makeText(context, "卡密已过期", android.widget.Toast.LENGTH_LONG).show();
-                            disableAllHooks();
-                            // 过期不通知回调，保持功能禁用
-                        } else {
-                            // 卡密有效，显示到期时间
-                            String dateStr = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-                                    .format(new java.util.Date(vipTime));
-                            android.widget.Toast.makeText(context, "卡密到期时间:" + dateStr, android.widget.Toast.LENGTH_LONG).show();
-
-                            if (sCurrentDialog != null && sCurrentDialog.isShowing()) {
-                                sCurrentDialog.dismiss();
-                                sCurrentDialog = null;
-                            }
-                            // 通知回调：验证通过
-                            if (sCallback != null) {
-                                sCallback.onResult(true);
-                                sCallback = null;
-                            }
-                            // 启动心跳检测
-                            startHeartbeat(context);
-                        }
-                    } catch (Exception e) {
-                        android.widget.Toast.makeText(context, "验证成功但解析到期时间失败", android.widget.Toast.LENGTH_SHORT).show();
-                    }
-                    break;
-                case "101":
-                    android.widget.Toast.makeText(context, "应用不存在", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "102":
-                    android.widget.Toast.makeText(context, "应用已关闭", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "104":
-                    android.widget.Toast.makeText(context, "接口维护中", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "105":
-                    android.widget.Toast.makeText(context, "接口未添加或不存在", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "106":
-                    android.widget.Toast.makeText(context, "签名为空", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "148":
-                    android.widget.Toast.makeText(context, "数据过期", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "149":
-                    android.widget.Toast.makeText(context, "签名有误", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "151":
-                    android.widget.Toast.makeText(context, "卡密为空", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "169":
-                    android.widget.Toast.makeText(context, "卡密不存在", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "171":
-                    android.widget.Toast.makeText(context, "卡密禁用", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                case "172":
-                    android.widget.Toast.makeText(context, "IP不一致", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-                default:
-                    android.widget.Toast.makeText(context, msg != null && !msg.isEmpty() ? msg : "未知错误", android.widget.Toast.LENGTH_SHORT).show();
-                    break;
-            }
-        }
-
-        private static void showToastOnMain(final Context context, final String text) {
-            new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
-                if (context != null) {
-                    android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show();
-                }
-            });
-        }
-
-        private static String rc4EncryptToHex(String plain, String key) {
-            if (plain == null || key == null) return null;
-            try {
-                byte[] data = plain.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                byte[] out = rc4Base(data, key);
-                return bytesToHex(out);
-            } catch (Exception e) {
-                return null;
-            }
-        }
-
-        private static String rc4DecryptFromHex(String hex, String key) {
-            if (hex == null || key == null) return null;
-            try {
-                byte[] data = hexToBytes(hex);
-                byte[] out = rc4Base(data, key);
-                return new String(out, java.nio.charset.StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                return null;
-            }
-        }
-
-        private static byte[] rc4Base(byte[] data, String key) {
-            byte[] s = initRc4Key(key);
-            int i = 0, j = 0;
-            byte[] out = new byte[data.length];
-            for (int k = 0; k < data.length; k++) {
-                i = (i + 1) & 0xFF;
-                j = (j + (s[i] & 0xFF)) & 0xFF;
-                byte tmp = s[i];
-                s[i] = s[j];
-                s[j] = tmp;
-                int t = ((s[i] & 0xFF) + (s[j] & 0xFF)) & 0xFF;
-                out[k] = (byte) (data[k] ^ s[t]);
-            }
-            return out;
-        }
-
-        private static byte[] initRc4Key(String key) {
-            byte[] keyBytes = key.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            byte[] s = new byte[256];
-            for (int i = 0; i < 256; i++) {
-                s[i] = (byte) i;
-            }
-            int j = 0;
-            for (int i = 0; i < 256; i++) {
-                j = (j + (s[i] & 0xFF) + (keyBytes[i % keyBytes.length] & 0xFF)) & 0xFF;
-                byte tmp = s[i];
-                s[i] = s[j];
-                s[j] = tmp;
-            }
-            return s;
-        }
-
-        private static String bytesToHex(byte[] bytes) {
-            StringBuilder sb = new StringBuilder(bytes.length * 2);
-            for (byte b : bytes) {
-                int v = b & 0xFF;
-                if (v < 16) sb.append('0');
-                sb.append(Integer.toHexString(v));
-            }
-            return sb.toString();
-        }
-
-        private static byte[] hexToBytes(String hex) {
-            if (hex == null) return null;
-            int len = hex.length();
-            if (len % 2 != 0) {
-                hex = "0" + hex;
-                len++;
-            }
-            byte[] data = new byte[len / 2];
-            for (int i = 0; i < len; i += 2) {
-                data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
-                        + Character.digit(hex.charAt(i + 1), 16));
-            }
-            return data;
-        }
-
-        private static String md5(String input) {
-            if (input == null) return "";
-            try {
-                java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
-                byte[] digest = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                StringBuilder sb = new StringBuilder(digest.length * 2);
-                for (byte b : digest) {
-                    int v = b & 0xFF;
-                    if (v < 16) sb.append('0');
-                    sb.append(Integer.toHexString(v));
-                }
-                return sb.toString();
-            } catch (Exception e) {
-                return "";
-            }
-        }
-
-        private static void spPut(Context context, String key, String value) {
-            if (context == null) return;
-            android.content.SharedPreferences sp = context.getSharedPreferences(KAMI_SP_NAME, android.content.Context.MODE_PRIVATE);
-            sp.edit().putString(key, value).apply();
-        }
-
-        private static String spGet(Context context, String key) {
-            if (context == null) return "";
-            android.content.SharedPreferences sp = context.getSharedPreferences(KAMI_SP_NAME, android.content.Context.MODE_PRIVATE);
-            return sp.getString(key, "");
-        }
-    }
 }
