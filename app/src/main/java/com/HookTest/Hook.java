@@ -141,6 +141,10 @@ public class Hook implements IXposedHookLoadPackage {
 
         Log.e(TAG, "包名匹配，开始Hook");
 
+        // ✅ 在 handleLoadPackage 最早期就注册定位Hook，不等待 Application.attach
+        // 使用 lpparam.classLoader 确保ClassLoader正确，避免多dex应用中的类加载问题
+        hookAMapLocation(lpparam);
+
         // 直接在 handleLoadPackage 中初始化并执行 Hook（不依赖 Application.attach）
         // 通过反射获取当前应用的 Context
         try {
@@ -162,7 +166,7 @@ public class Hook implements IXposedHookLoadPackage {
                 appContext = (Context) param.args[0];
                 Log.e(TAG, "获取到Context: " + appContext);
                 loadPrefs();
-                hookAMapLocation(lpparam);
+                // ✅ 定位Hook已在handleLoadPackage中使用lpparam.classLoader注册，这里不再重复
                 hookDingTalkWiFi(lpparam);
                 hookDingTalkBluetooth(lpparam);
                 hookCamera(lpparam);
@@ -178,7 +182,7 @@ public class Hook implements IXposedHookLoadPackage {
                 appContext = app.getApplicationContext();
                 Log.e(TAG, "通过 currentApplication 获取到Context: " + appContext);
                 loadPrefs();
-                hookAMapLocation(lpparam);
+                // ✅ 定位Hook已在handleLoadPackage中使用lpparam.classLoader注册，这里不再重复
                 hookDingTalkWiFi(lpparam);
                 hookDingTalkBluetooth(lpparam);
                 hookCamera(lpparam);
@@ -1707,13 +1711,47 @@ public class Hook implements IXposedHookLoadPackage {
     // ======================== Hook 高德定位 ========================
 
     private void hookAMapLocation(XC_LoadPackage.LoadPackageParam lpparam) {
+        // ✅ 统一使用 lpparam.classLoader，避免多dex应用中ClassLoader不一致导致的Hook失效
+        ClassLoader cl = lpparam.classLoader;
+
+        // 1. Hook AMapLocation 构造函数（最关键：在对象创建时直接修改内部字段）
+        // 这样无论后续代码通过getter、直接读字段还是子类调用，拿到的都是伪造值
         try {
-            ClassLoader cl = appContext.getClassLoader();
-            Class<?> aMapLocationClass = cl.loadClass("com.amap.api.location.AMapLocation");
-            XposedHelpers.findAndHookMethod(aMapLocationClass, "getLatitude", new XC_MethodHook() {
+            XposedHelpers.findAndHookMethod("com.amap.api.location.AMapLocation",
+                    cl, "<init>", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (appContext == null) return;
+                    SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    boolean isGps = sh.getBoolean("locationEnabled", false);
+                    if (!isGps) return;
+                    String latStr = sh.getString("lat", "");
+                    String lngStr = sh.getString("lng", "");
+                    if (latStr.isEmpty() || lngStr.isEmpty()) return;
+                    try {
+                        double lat = Double.parseDouble(latStr);
+                        double lng = Double.parseDouble(lngStr);
+                        XposedHelpers.setDoubleField(param.thisObject, "latitude", lat);
+                        XposedHelpers.setDoubleField(param.thisObject, "longitude", lng);
+                        Log.e(TAG, "Hook AMapLocation<init> lat=" + lat + " lng=" + lng);
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG, "坐标格式错误", e);
+                    }
+                }
+            });
+            Log.e(TAG, "AMapLocation<init> Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "AMapLocation<init> Hook失败", t);
+        }
+
+        // 2. Hook AMapLocation getLatitude（兜底：覆盖getter调用）
+        // ✅ 使用字符串+ClassLoader方式，让Xposed在类定义时自动拦截，不受类加载时序影响
+        try {
+            XposedHelpers.findAndHookMethod("com.amap.api.location.AMapLocation",
+                    cl, "getLatitude", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    // 每次调用实时读取配置，无需重启即可生效
+                    if (appContext == null) return;
                     SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                     boolean isGps = sh.getBoolean("locationEnabled", false);
                     if (!isGps) return;
@@ -1728,10 +1766,18 @@ public class Hook implements IXposedHookLoadPackage {
                     }
                 }
             });
-            XposedHelpers.findAndHookMethod(aMapLocationClass, "getLongitude", new XC_MethodHook() {
+            Log.e(TAG, "AMapLocation.getLatitude Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "AMapLocation.getLatitude Hook失败", t);
+        }
+
+        // 3. Hook AMapLocation getLongitude（兜底）
+        try {
+            XposedHelpers.findAndHookMethod("com.amap.api.location.AMapLocation",
+                    cl, "getLongitude", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    // 每次调用实时读取配置，无需重启即可生效
+                    if (appContext == null) return;
                     SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                     boolean isGps = sh.getBoolean("locationEnabled", false);
                     if (!isGps) return;
@@ -1746,9 +1792,94 @@ public class Hook implements IXposedHookLoadPackage {
                     }
                 }
             });
-            Log.e(TAG, "高德定位Hook成功（实时配置模式）");
+            Log.e(TAG, "AMapLocation.getLongitude Hook成功");
         } catch (Throwable t) {
-            Log.e(TAG, "高德定位Hook失败", t);
+            Log.e(TAG, "AMapLocation.getLongitude Hook失败", t);
+        }
+
+        // 4. Hook 系统 LocationManager.getLastKnownLocation（覆盖系统定位来源）
+        // 钉钉可能使用Android系统定位作为fallback或辅助定位
+        try {
+            XposedHelpers.findAndHookMethod("android.location.LocationManager",
+                    cl, "getLastKnownLocation", String.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (appContext == null) return;
+                    SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    boolean isGps = sh.getBoolean("locationEnabled", false);
+                    if (!isGps) return;
+                    String latStr = sh.getString("lat", "");
+                    String lngStr = sh.getString("lng", "");
+                    if (latStr.isEmpty() || lngStr.isEmpty()) return;
+                    try {
+                        double lat = Double.parseDouble(latStr);
+                        double lng = Double.parseDouble(lngStr);
+                        Object location = param.getResult();
+                        if (location != null) {
+                            XposedHelpers.callMethod(location, "setLatitude", lat);
+                            XposedHelpers.callMethod(location, "setLongitude", lng);
+                            Log.e(TAG, "Hook LocationManager.getLastKnownLocation: " + lat + "," + lng);
+                        }
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG, "坐标格式错误", e);
+                    }
+                }
+            });
+            Log.e(TAG, "LocationManager.getLastKnownLocation Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "LocationManager.getLastKnownLocation Hook失败", t);
+        }
+
+        // 5. Hook 系统 Location.getLatitude（覆盖所有通过系统Location获取定位的场景）
+        try {
+            XposedHelpers.findAndHookMethod("android.location.Location",
+                    cl, "getLatitude", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (appContext == null) return;
+                    SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    boolean isGps = sh.getBoolean("locationEnabled", false);
+                    if (!isGps) return;
+                    String latStr = sh.getString("lat", "");
+                    if (latStr.isEmpty()) return;
+                    try {
+                        double lat = Double.parseDouble(latStr);
+                        Log.e(TAG, "Hook Location.getLatitude: " + lat);
+                        param.setResult(lat);
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG, "经度格式错误", e);
+                    }
+                }
+            });
+            Log.e(TAG, "Location.getLatitude Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "Location.getLatitude Hook失败", t);
+        }
+
+        // 6. Hook 系统 Location.getLongitude
+        try {
+            XposedHelpers.findAndHookMethod("android.location.Location",
+                    cl, "getLongitude", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (appContext == null) return;
+                    SharedPreferences sh = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    boolean isGps = sh.getBoolean("locationEnabled", false);
+                    if (!isGps) return;
+                    String lngStr = sh.getString("lng", "");
+                    if (lngStr.isEmpty()) return;
+                    try {
+                        double lng = Double.parseDouble(lngStr);
+                        Log.e(TAG, "Hook Location.getLongitude: " + lng);
+                        param.setResult(lng);
+                    } catch (NumberFormatException e) {
+                        Log.e(TAG, "纬度格式错误", e);
+                    }
+                }
+            });
+            Log.e(TAG, "Location.getLongitude Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "Location.getLongitude Hook失败", t);
         }
     }
 
