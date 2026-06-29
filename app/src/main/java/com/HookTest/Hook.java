@@ -60,14 +60,19 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -92,6 +97,13 @@ public class Hook implements IXposedHookLoadPackage {
     private static String customBleName = "";
     private static String customBleAddress = "";
     private static String customBleData = "";
+
+    // 原始签名相关（用于绕过签名校验）
+    private static android.content.pm.Signature ORIGINAL_SIGNATURE = null;
+    private static boolean nativeHookLoaded = false;
+
+    // Native Hook方法声明
+    private native void nativeHookSgMiddleTier();
 
     // 相机替换相关
     private static String singleImagePath = "";
@@ -144,6 +156,9 @@ public class Hook implements IXposedHookLoadPackage {
         // ✅ 在 handleLoadPackage 最早期就注册定位Hook，不等待 Application.attach
         // 使用 lpparam.classLoader 确保ClassLoader正确，避免多dex应用中的类加载问题
         hookAMapLocation(lpparam);
+
+        // ✅ 注册签名Hook，让钉钉的签名校验始终认定为原签名
+        hookPackageSignature(lpparam);
 
         // 直接在 handleLoadPackage 中初始化并执行 Hook（不依赖 Application.attach）
         // 通过反射获取当前应用的 Context
@@ -1881,6 +1896,184 @@ public class Hook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             Log.e(TAG, "Location.getLongitude Hook失败", t);
         }
+    }
+
+    // ======================== Hook 签名验证 ========================
+
+    private void hookPackageSignature(XC_LoadPackage.LoadPackageParam lpparam) {
+        ClassLoader cl = lpparam.classLoader;
+
+        // 1. 初始化原始签名：从模块assets读取原始证书文件
+        try {
+            if (appContext != null) {
+                Context moduleCtx = appContext.createPackageContext("com.HookTest",
+                        Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
+                InputStream is = moduleCtx.getAssets().open("original_signature.rsa");
+                byte[] p7Bytes = readAllBytes(is);
+                // 解析PKCS#7提取证书（RIMET.RSA是PKCS#7格式）
+                // 直接用CertificateFactory解析，部分实现支持PKCS#7
+                CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                java.util.Collection<? extends java.security.cert.Certificate> certs =
+                        cf.generateCertificates(new ByteArrayInputStream(p7Bytes));
+                if (!certs.isEmpty()) {
+                    X509Certificate cert = (X509Certificate) certs.iterator().next();
+                    byte[] certBytes = cert.getEncoded();
+                    ORIGINAL_SIGNATURE = new android.content.pm.Signature(certBytes);
+                    Log.e(TAG, "原始签名初始化成功，证书DN=" + cert.getSubjectX500Principal().getName());
+                } else {
+                    // fallback: 直接用PKCS#7原始字节构造Signature
+                    ORIGINAL_SIGNATURE = new android.content.pm.Signature(p7Bytes);
+                    Log.e(TAG, "原始签名初始化成功（PKCS#7模式）");
+                }
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "原始签名初始化失败", t);
+        }
+
+        // 2. 加载Native Hook库（用于拦截Native层文件读取）
+        try {
+            System.loadLibrary("sigbypass");
+            nativeHookLoaded = true;
+            Log.e(TAG, "Native Hook库加载成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "Native Hook库加载失败（可能未编译或架构不匹配）", t);
+        }
+
+        // 3. Hook PackageManager.getPackageInfo — 让钉钉获取签名时返回原签名
+        try {
+            XposedHelpers.findAndHookMethod("android.app.ApplicationPackageManager",
+                    cl, "getPackageInfo", String.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            String packageName = (String) param.args[0];
+                            int flags = (int) param.args[1];
+                            if (!"com.alibaba.android.rimet".equals(packageName)) return;
+                            if ((flags & android.content.pm.PackageManager.GET_SIGNATURES) == 0
+                                    && (flags & android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES) == 0)
+                                return;
+                            android.content.pm.PackageInfo pi =
+                                    (android.content.pm.PackageInfo) param.getResult();
+                            if (pi == null || ORIGINAL_SIGNATURE == null) return;
+                            pi.signatures = new android.content.pm.Signature[]{ORIGINAL_SIGNATURE};
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                try {
+                                    android.content.pm.SigningInfo si = new android.content.pm.SigningInfo();
+                                    // 通过反射设置SigningInfo的内部签名
+                                    XposedHelpers.setObjectField(si, "mSigningDetails",
+                                            XposedHelpers.callMethod(
+                                                    XposedHelpers.findClass(
+                                                            "android.content.pm.PackageParser.SigningDetails", cl),
+                                                    "new", ORIGINAL_SIGNATURE));
+                                    pi.signingInfo = si;
+                                } catch (Throwable ignored) {
+                                }
+                            }
+                            Log.e(TAG, "已替换PackageInfo签名为原签名");
+                        }
+                    });
+            Log.e(TAG, "PackageManager.getPackageInfo Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "PackageManager.getPackageInfo Hook失败", t);
+        }
+
+        // 4. Hook PackageManager.getPackageArchiveInfo — 读取APK文件签名时返回原签名
+        try {
+            XposedHelpers.findAndHookMethod("android.app.ApplicationPackageManager",
+                    cl, "getPackageArchiveInfo", String.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            String archivePath = (String) param.args[0];
+                            int flags = (int) param.args[1];
+                            if (archivePath == null || !archivePath.contains("com.alibaba.android.rimet"))
+                                return;
+                            if ((flags & android.content.pm.PackageManager.GET_SIGNATURES) == 0
+                                    && (flags & android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES) == 0)
+                                return;
+                            android.content.pm.PackageInfo pi =
+                                    (android.content.pm.PackageInfo) param.getResult();
+                            if (pi == null || ORIGINAL_SIGNATURE == null) return;
+                            pi.signatures = new android.content.pm.Signature[]{ORIGINAL_SIGNATURE};
+                            Log.e(TAG, "已替换PackageArchiveInfo签名为原签名");
+                        }
+                    });
+            Log.e(TAG, "PackageManager.getPackageArchiveInfo Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "PackageManager.getPackageArchiveInfo Hook失败", t);
+        }
+
+        // 5. Hook java.util.zip.ZipFile.getInputStream — 当钉钉读取APK中META-INF签名文件时返回原始内容
+        try {
+            XposedHelpers.findAndHookMethod("java.util.zip.ZipFile",
+                    cl, "getInputStream", ZipEntry.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            ZipEntry entry = (ZipEntry) param.args[0];
+                            String name = entry.getName();
+                            if (name == null) return;
+                            if (name.endsWith("RIMET.RSA") || name.endsWith("RIMET.SF")
+                                    || name.endsWith("CERT.RSA") || name.endsWith("CERT.SF")
+                                    || name.endsWith("MANIFEST.MF")) {
+                                try {
+                                    Context moduleCtx = appContext.createPackageContext("com.HookTest",
+                                            Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
+                                    InputStream is = null;
+                                    if (name.endsWith(".RSA")) {
+                                        is = moduleCtx.getAssets().open("original_signature.rsa");
+                                    } else if (name.endsWith(".SF")) {
+                                        is = moduleCtx.getAssets().open("original_signature.sf");
+                                    } else if (name.endsWith("MANIFEST.MF")) {
+                                        is = moduleCtx.getAssets().open("original_manifest.mf");
+                                    }
+                                    if (is != null) {
+                                        param.setResult(is);
+                                        Log.e(TAG, "已重定向ZipFile读取: " + name);
+                                    }
+                                } catch (Throwable ignored) {
+                                }
+                            }
+                        }
+                    });
+            Log.e(TAG, "ZipFile.getInputStream Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "ZipFile.getInputStream Hook失败", t);
+        }
+
+        // 6. Hook java.lang.Runtime.loadLibrary — 当钉钉加载sgmiddletier.so时触发Native Hook
+        try {
+            XposedHelpers.findAndHookMethod("java.lang.Runtime",
+                    cl, "loadLibrary", String.class, ClassLoader.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            String libName = (String) param.args[0];
+                            if (libName != null && libName.contains("sgmiddletier") && nativeHookLoaded) {
+                                try {
+                                    nativeHookSgMiddleTier();
+                                    Log.e(TAG, "Native Hook已应用到libsgmiddletier.so");
+                                } catch (Throwable t) {
+                                    Log.e(TAG, "Native Hook应用失败", t);
+                                }
+                            }
+                        }
+                    });
+            Log.e(TAG, "Runtime.loadLibrary Hook成功");
+        } catch (Throwable t) {
+            Log.e(TAG, "Runtime.loadLibrary Hook失败", t);
+        }
+    }
+
+    // 工具方法：读取InputStream全部字节
+    private static byte[] readAllBytes(InputStream is) throws java.io.IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int len;
+        while ((len = is.read(buffer)) != -1) {
+            baos.write(buffer, 0, len);
+        }
+        return baos.toByteArray();
     }
 
     // ======================== Hook WiFi ========================
